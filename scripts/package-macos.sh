@@ -58,6 +58,8 @@ if [[ -n "${CONFIGSSH_SIGNING_IDENTITY:-}" ]]; then
   signing_details="$(codesign -dv --verbose=4 "$app_output" 2>&1)"
   if [[ "$signing_details" != *"Authority=Developer ID Application:"* ]]; then
     echo "Direct-download release requires a Developer ID Application certificate." >&2
+    # This run created $app_output (it refuses existing output), so remove the rejected bundle.
+    rm -rf -- "$app_output"
     exit 2
   fi
 else

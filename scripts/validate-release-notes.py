@@ -43,7 +43,9 @@ def validate(tag: str, root: Path) -> list[str]:
         highlights = len(re.findall(r"(?m)^- ", sections[0]))
         if not 1 <= highlights <= 3:
             errors.append("“本次亮点”必须有 1–3 条")
-    if re.search(r"(?i)\b(?:TODO|TBD|FIXME)\b|vX\.Y\.Z|<[^>]+>|待填写|占位符", notes):
+    # Angle brackets are legitimate inside code (`script <tag>`); only bare ones are placeholders.
+    prose = re.sub(r"```.*?```|`[^`\n]*`", "", notes, flags=re.DOTALL)
+    if re.search(r"(?i)\b(?:TODO|TBD|FIXME)\b|vX\.Y\.Z|待填写|占位符", notes) or re.search(r"<[^>]+>", prose):
         errors.append("Release Notes 包含占位符")
     if "未签名" not in notes or "未公证" not in notes:
         errors.append("当前流水线仅发布未签名预览包，必须明确写出未签名、未公证")
