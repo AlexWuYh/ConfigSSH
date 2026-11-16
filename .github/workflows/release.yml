@@ -1,0 +1,96 @@
+name: Build macOS release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: configssh-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, test and attach release assets
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag and professional release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/validate-release-notes.py "$RELEASE_TAG"
+          python3 -m unittest discover -s scripts/tests
+          if git ls-files '.ai/**' | grep -q .; then
+            echo 'The .ai/ directory must not be present in the public tag.' >&2
+            exit 1
+          fi
+
+      - name: Show build toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Run temporary-fixture tests
+        run: swift test
+
+      - name: Build unsigned macOS app
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          CONFIGSSH_APP_OUTPUT: ${{ runner.temp }}/ConfigSSH.app
+          CONFIGSSH_SIGNING_IDENTITY: ''
+        run: |
+          set -euo pipefail
+          export CONFIGSSH_VERSION="${RELEASE_TAG#v}"
+          ./scripts/package-macos.sh
+          test -x "$CONFIGSSH_APP_OUTPUT/Contents/MacOS/ConfigSSH"
+          test -f "$CONFIGSSH_APP_OUTPUT/Contents/Resources/ConfigSSH.icns"
+          test -f "$CONFIGSSH_APP_OUTPUT/Contents/Resources/LICENSE.txt"
+          test -d "$CONFIGSSH_APP_OUTPUT/Contents/Resources/ConfigSSH_ConfigSSH.bundle"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$CONFIGSSH_APP_OUTPUT/Contents/Info.plist")" = 'cn.wuewa.configssh'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$CONFIGSSH_APP_OUTPUT/Contents/Info.plist")" = "$CONFIGSSH_VERSION"
+          test "$(lipo -archs "$CONFIGSSH_APP_OUTPUT/Contents/MacOS/ConfigSSH")" = 'arm64'
+
+      - name: Package app and generate checksum
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          asset="ConfigSSH-${RELEASE_TAG}-unsigned-macos-arm64.zip"
+          ditto -c -k --keepParent "$RUNNER_TEMP/ConfigSSH.app" "$RUNNER_TEMP/release/$asset"
+          cd "$RUNNER_TEMP/release"
+          shasum -a 256 "$asset" > SHA256SUMS.txt
+          shasum -a 256 -c SHA256SUMS.txt
+
+      - name: Create or update prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          asset="$RUNNER_TEMP/release/ConfigSSH-${RELEASE_TAG}-unsigned-macos-arm64.zip"
+          checksums="$RUNNER_TEMP/release/SHA256SUMS.txt"
+          notes=".github/release-notes/${RELEASE_TAG}.md"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$asset" "$checksums" --clobber
+            gh release edit "$RELEASE_TAG" --title "ConfigSSH $RELEASE_TAG" \
+              --notes-file "$notes" --prerelease
+          else
+            gh release create "$RELEASE_TAG" "$asset" "$checksums" \
+              --title "ConfigSSH $RELEASE_TAG" --notes-file "$notes" \
+              --prerelease --verify-tag
+          fi

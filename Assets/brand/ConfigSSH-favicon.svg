@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>ConfigSSH</title><g transform="translate(-43.01 -46.85) scale(1.336)">
+  <title id="title">ConfigSSH concept B — open C with endpoint</title>
+  <path fill="#111111" d="M198 36H98C60 36 36 60 36 98V158C36 196 60 220 98 220H198V184H102C82 184 72 174 72 154V102C72 82 82 72 102 72H198V36Z"/>
+  <path fill="#111111" d="M80 111H147C157 111 165 119 165 129C165 139 157 147 147 147H80V111Z"/>
+  <circle fill="#111111" cx="200" cy="129" r="20"/>
+</g></svg>
