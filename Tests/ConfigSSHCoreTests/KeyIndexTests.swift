@@ -196,4 +196,14 @@ final class KeyIndexTests: XCTestCase {
         XCTAssertFalse(dirKey.privateKeyExists)
         XCTAssertTrue(result.issues.contains { $0.contains("id_huge.pub") })
     }
+
+    func testBoundedRunnerKillsChildThatIgnoresSIGTERM() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "trap '' TERM; exec /bin/sleep 30"]
+        let started = Date()
+        XCTAssertThrowsError(try BoundedProcessRunner.run(process, timeout: 0.5))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        XCTAssertFalse(process.isRunning)
+    }
 }

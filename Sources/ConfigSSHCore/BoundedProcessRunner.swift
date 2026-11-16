@@ -9,7 +9,8 @@ package enum BoundedProcessRunner {
         try process.run()
         if completed.wait(timeout: .now() + timeout) == .timedOut {
             if process.isRunning { process.terminate() }
-            if completed.wait(timeout: .now() + 1) == .timedOut {
+            if completed.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
+                // Not yet reaped, so the PID still belongs to our child.
                 _ = Darwin.kill(process.processIdentifier, SIGKILL)
                 _ = completed.wait(timeout: .now() + 1)
             }
