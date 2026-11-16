@@ -428,6 +428,7 @@ package struct ConfigWriter: Sendable {
         switch action {
         case .add(let input):
             try validate(input, requireHostName: true)
+            try validateIdentitiesOnly(input, existing: nil)
             guard !scan.hosts.contains(where: { $0.alias.caseInsensitiveCompare(input.alias) == .orderedSame }) else {
                 throw ConfigEditError.invalid("Host 别名已存在：\(input.alias)")
             }
@@ -469,6 +470,7 @@ package struct ConfigWriter: Sendable {
                 throw ConfigEditError.invalid("当前版本暂不支持修改 Host 别名")
             }
             try validate(input, requireHostName: false)
+            try validateIdentitiesOnly(input, existing: host)
             let current = try SafeFileIO.snapshot(at: host.sourceURL)
             guard current.version.sha256 == scan.sources.first(where: { $0.url == host.sourceURL })?.sha256 else {
                 throw ConfigEditError.conflict("主机源文件已变化，请重新载入")
@@ -822,6 +824,20 @@ package struct ConfigWriter: Sendable {
         return result
     }
 
+    /// `IdentitiesOnly yes` makes ssh offer only the configured IdentityFile, so turning it on
+    /// without one would leave the host unable to authenticate with keys. An imported host that
+    /// already had it on while inheriting its key (e.g. from `Host *`) stays editable unchanged.
+    private func validateIdentitiesOnly(_ input: HostInput, existing: HostRecord?) throws {
+        guard input.identitiesOnly == .yes,
+              input.identityFile.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        if let existing,
+           existing.option("IdentitiesOnly").flatMap(IdentitiesOnlyChoice.init(configValue:)) == .yes,
+           existing.option("IdentityFile") == nil {
+            return
+        }
+        throw ConfigEditError.invalid("开启 IdentitiesOnly 前，请先填写或选择 IdentityFile 密钥文件。开启后 SSH 只会使用这里指定的密钥，没有密钥将无法通过密钥认证。")
+    }
+
     /// OpenSSH separates a keyword from its value with whitespace (space or tab) or `=`.
     private func startsWithKeyword(_ lowercasedLine: String, _ keyword: String) -> Bool {
         guard lowercasedLine.hasPrefix(keyword),
@@ -862,7 +878,8 @@ package struct ConfigWriter: Sendable {
 
     private func render(_ input: HostInput, newline: String) -> String {
         let fields = [("HostName", input.hostName, false), ("User", input.user, false), ("Port", input.port, false),
-                      ("IdentityFile", input.identityFile, true), ("ProxyJump", input.proxyJump, false)]
+                      ("IdentityFile", input.identityFile, true), ("IdentitiesOnly", input.identitiesOnly.rawValue, false),
+                      ("ProxyJump", input.proxyJump, false)]
         return (["Host \(input.alias)"] + fields.compactMap { key, value, allowsSpaces in
             value.isEmpty ? nil : "  \(key) \(allowsSpaces ? encodePath(value) : value)"
         }).joined(separator: newline) + newline
@@ -885,7 +902,8 @@ package struct ConfigWriter: Sendable {
             throw ConfigEditError.conflict("Host 字节范围已变化，请重新载入")
         }
         let desired = [("HostName", input.hostName), ("User", input.user), ("Port", input.port),
-                       ("IdentityFile", encodePath(input.identityFile)), ("ProxyJump", input.proxyJump)]
+                       ("IdentityFile", encodePath(input.identityFile)),
+                       ("IdentitiesOnly", input.identitiesOnly.rawValue), ("ProxyJump", input.proxyJump)]
         let lines = byteLines(in: data)
         var edits: [(range: Range<Int>, replacement: Data)] = []
         var additions: [String] = []
@@ -897,6 +915,13 @@ package struct ConfigWriter: Sendable {
             guard let option = options.first else {
                 if !value.isEmpty { additions.append("  \(name) \(value)") }
                 continue
+            }
+            if name == "IdentitiesOnly" {
+                // Compare meaning, not spelling, so an unchanged `True`/`YES` keeps its original bytes.
+                guard let existingChoice = IdentitiesOnlyChoice(configValue: option.arguments.joined(separator: " ")) else {
+                    throw ConfigEditError.unsafe("IdentitiesOnly 的原值无法识别，请在源文件中编辑")
+                }
+                if existingChoice == input.identitiesOnly { continue }
             }
             let existingValue = name.caseInsensitiveCompare("IdentityFile") == .orderedSame
                 ? option.arguments.first ?? ""

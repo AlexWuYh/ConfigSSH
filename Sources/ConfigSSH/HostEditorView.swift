@@ -38,6 +38,7 @@ struct HostEditorView: View {
     @State private var diskComparison: String?
     @State private var showsKeyPicker = false
     @State private var isReloading = false
+    @State private var identitiesOnlyNeedsKey = false
 
     init(mode: HostEditorMode, scan: ConfigScan, writer: ConfigWriter, availableKeys: [PublicKeyRecord],
          availableGroups: [String],
@@ -111,6 +112,7 @@ struct HostEditorView: View {
                                     }
                                 }
                             }
+                            identitiesOnlyControl
                             TextField("ProxyJump", text: $input.proxyJump)
                         }
                         if let host = mode.existingHost {
@@ -191,6 +193,62 @@ struct HostEditorView: View {
                 plan = nil
             }
         }
+    }
+
+    private var hasIdentityFile: Bool {
+        !input.identityFile.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// An imported host that already uses `IdentitiesOnly yes` with a key inherited from another
+    /// rule (for example `Host *`) may keep it; the core planner applies the same exception.
+    private var inheritsKeyForIdentitiesOnly: Bool {
+        guard let host = mode.existingHost, !hasIdentityFile else { return false }
+        return host.option("IdentitiesOnly").flatMap(IdentitiesOnlyChoice.init(configValue:)) == .yes &&
+            host.option("IdentityFile") == nil
+    }
+
+    private var identitiesOnlySelection: Binding<IdentitiesOnlyChoice> {
+        Binding(
+            get: { input.identitiesOnly },
+            set: { choice in
+                if choice == .yes && !hasIdentityFile && !inheritsKeyForIdentitiesOnly {
+                    identitiesOnlyNeedsKey = true
+                    return
+                }
+                identitiesOnlyNeedsKey = false
+                input.identitiesOnly = choice
+                plan = nil
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var identitiesOnlyControl: some View {
+        Picker("IdentitiesOnly", selection: identitiesOnlySelection) {
+            Text("未设置").tag(IdentitiesOnlyChoice.unset)
+            Text("yes").tag(IdentitiesOnlyChoice.yes)
+            Text("no").tag(IdentitiesOnlyChoice.no)
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: input.identityFile) { _, _ in
+            if hasIdentityFile { identitiesOnlyNeedsKey = false }
+        }
+        if identitiesOnlyNeedsKey {
+            Label("请先填写或选择上面的 IdentityFile 密钥文件，再开启 IdentitiesOnly。",
+                  systemImage: "key.slash")
+                .foregroundStyle(.orange)
+        } else if input.identitiesOnly == .yes && !hasIdentityFile && !inheritsKeyForIdentitiesOnly {
+            Label("IdentitiesOnly 已开启，但 IdentityFile 为空，保存时会被拒绝。请填写密钥，或改为“未设置”/“no”。",
+                  systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.red)
+        } else if input.identitiesOnly == .yes && inheritsKeyForIdentitiesOnly {
+            Text("此主机的密钥来自其他规则（例如 Host *）；保持开启不会修改原配置。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        Text("开启后，SSH 只尝试 IdentityFile 指定的密钥，不再逐个尝试 ssh-agent 中的其他密钥，可避免 “Too many authentication failures”。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 
     private func preview(_ plan: ConfigChangePlan) -> some View {

@@ -1066,6 +1066,7 @@ private struct HostDetailView: View {
                         DetailField(label: "User", value: host.user)
                         DetailField(label: "Port", value: host.port)
                         DetailField(label: "IdentityFile", value: host.option("IdentityFile"))
+                        DetailField(label: "IdentitiesOnly", value: host.option("IdentitiesOnly"))
                         DetailField(label: "ProxyJump", value: host.option("ProxyJump"))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
