@@ -13,7 +13,7 @@ Manage SSH Config Visually. Connect Effortlessly.
 ![ConfigSSH 的全部主机页面：左侧功能导航，中部按 Engineering 和 Personal 分组并高亮 api 主机，右侧展示 api 的 HostName、User、Port、配置来源和分组](Assets/screenshots/hosts.png)
 
 > [!NOTE]
-> ConfigSSH 目前是**预览版**：只能从源码构建，或使用未签名的预发布包。终端自动化授权、真实 iCloud 多机同步和无障碍功能还没有完成实机验收。详见[已知限制](#已知限制)。
+> ConfigSSH 目前是**预览版**：只能从源码构建，或使用未签名的预发布包。详见[已知限制](#已知限制)。
 
 ## 目录
 
@@ -263,20 +263,13 @@ ConfigSSH 启动后会读取 `~/.ssh/config` 及其能访问的 `Include` 文件
 不同 Mac 的绝对路径、`IdentityFile` 位置可能不同，外部 Include 也不会被同步。拉取后请检查这些路径，需要时手动调整。
 </details>
 
-<details>
-<summary><b>我以前用过“iCloud 明文快照”，现在去哪了？</b></summary>
-
-旧版明文 iCloud 快照已停用，应用不会自动删除这些文件。请在 Finder 中检查后自行清理。
-</details>
-
 ## 已知限制
 
 - 预发布包未签名、未公证，Gatekeeper 会提示风险。
-- 以下行为还没有完成实机验收：Ghostty/Otty 的新标签页、最终 `.app` 的自动化授权、真实 iCloud 多台 Mac 同步、VoiceOver。
 - 全文编辑的静态检查**不能保证**所有 OpenSSH 参数在当前系统上有效。
 - 目前只提供 Apple Silicon（arm64）版本。
 
-开发进度和每轮验收记录见 [MILESTONES.md](MILESTONES.md)。
+开发进度见 [MILESTONES.md](MILESTONES.md)。
 
 ## 参与开发
 

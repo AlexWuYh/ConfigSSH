@@ -208,9 +208,6 @@ struct SettingsView: View {
                         Label("未检测到 iCloud Drive，请先在系统设置中启用。", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                     }
-                    Text("旧版明文 iCloud 快照不会自动删除，请在 Finder 中人工检查并清理。")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
                 }
                 Section("配置文件") {
                     LabeledContent("主配置") { Text(writer.rootURL.path).textSelection(.enabled) }
