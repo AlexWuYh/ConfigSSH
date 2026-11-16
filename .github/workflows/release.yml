@@ -33,7 +33,12 @@ jobs:
           set -euo pipefail
           python3 scripts/validate-release-notes.py "$RELEASE_TAG"
           python3 -m unittest discover -s scripts/tests
-          if git rev-list --objects HEAD | grep -E '^[0-9a-f]+ \.ai(/|$)' >/dev/null; then
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag $RELEASE_TAG must point at a commit already on main (docs/RELEASING.md)." >&2
+            exit 1
+          fi
+          if git rev-list --objects --all | grep -E '^[0-9a-f]+ \.ai(/|$)' >/dev/null; then
             echo 'The .ai/ directory must not be present in the public tag or its history.' >&2
             exit 1
           fi

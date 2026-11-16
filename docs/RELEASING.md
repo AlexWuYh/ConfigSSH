@@ -35,7 +35,7 @@ swift build -c release
 python3 scripts/validate-release-notes.py vX.Y.Z
 git diff --check
 git ls-files '.ai/**'  # 必须为空
-test -z "$(git rev-list --objects HEAD | grep -E '^[0-9a-f]+ \.ai(/|$)')"  # 可达历史也必须为空
+test -z "$(git rev-list --objects --all | grep -E '^[0-9a-f]+ \.ai(/|$)')"  # 可达历史也必须为空
 ```
 
 确认 Release Notes、版本、截图和源码一致后，再由维护者创建并推送 tag：
