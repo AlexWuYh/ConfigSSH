@@ -459,4 +459,59 @@ final class ConfigWriterTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.root.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: writer.managedDirectoryURL.appendingPathComponent("demo.conf").path))
     }
+
+    func testDeletingManagedHostKeepsOtherRulesInSameFile() throws {
+        let paths = try fixture()
+        try Data("Include config.d/*.conf\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        try FileManager.default.createDirectory(at: writer.managedDirectoryURL, withIntermediateDirectories: true)
+        let file = writer.managedDirectoryURL.appendingPathComponent("web.conf")
+        for trailer in ["Host *.corp\n  User ops\n", "Match host db\n  User admin\n", "Host a b\n  Port 22\n"] {
+            let original = Data("Host web\n  HostName web.example\n\n\(trailer)".utf8)
+            try original.write(to: file)
+            let scan = ConfigReader(rootURL: paths.root).scan()
+            let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+            let plan = try writer.plan(.delete(hostID: host.id), from: scan)
+            let after = try XCTUnwrap(plan.changes.first?.after, "whole file deletion would drop: \(trailer)")
+            XCTAssertTrue(String(decoding: after, as: UTF8.self).hasSuffix(trailer))
+            XCTAssertFalse(String(decoding: after, as: UTF8.self).contains("Host web"))
+        }
+    }
+
+    func testGlobalOptionInsertAfterCommentWithoutTrailingNewline() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        for (original, expected) in [("# my config", "# my config\nServerAliveInterval 30\n"),
+                                     ("# a\r\n# b", "# a\r\n# b\r\nServerAliveInterval 30\r\n")] {
+            try Data(original.utf8).write(to: paths.root)
+            let scan = ConfigReader(rootURL: paths.root).scan()
+            _ = try writer.commit(writer.planGlobalOptionUpdate(keyword: "ServerAliveInterval", value: "30", from: scan))
+            XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8), expected)
+            XCTAssertEqual(ConfigReader(rootURL: paths.root).scan().globalOptions.map(\.keyword), ["ServerAliveInterval"])
+        }
+    }
+
+    func testCommitRefusesDirectorySwappedForSymlinkAfterPreview() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "web", hostName: "web.example", group: "Work")),
+                                          from: ConfigReader(rootURL: paths.root).scan()))
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        let plan = try writer.plan(.update(hostID: host.id, input: HostInput(alias: "web", hostName: "changed.example", group: "Work")),
+                                   from: scan)
+        let outside = paths.backup.deletingLastPathComponent().appendingPathComponent("outside")
+        for swapped in [writer.managedDirectoryURL.appendingPathComponent("Work"), writer.managedDirectoryURL] {
+            try FileManager.default.moveItem(at: swapped, to: outside)
+            try FileManager.default.createSymbolicLink(at: swapped, withDestinationURL: outside)
+            let moved = swapped == writer.managedDirectoryURL ? outside.appendingPathComponent("Work/web.conf")
+                                                               : outside.appendingPathComponent("web.conf")
+            let before = try Data(contentsOf: moved)
+            XCTAssertThrowsError(try writer.commit(plan), "swapped \(swapped.lastPathComponent)")
+            XCTAssertEqual(try Data(contentsOf: moved), before)
+            try FileManager.default.removeItem(at: swapped)
+            try FileManager.default.moveItem(at: outside, to: swapped)
+        }
+        XCTAssertEqual(try writer.backups.list().count, 2, "no backup may be taken through the symlink")
+    }
 }

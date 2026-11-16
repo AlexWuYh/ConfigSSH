@@ -180,28 +180,45 @@ private struct GroupDeletionJournalStore {
         guard FileManager.default.fileExists(atPath: directoryURL.path) else { return [] }
         try SafeFileIO.ensureDirectory(directoryURL)
         let files = try FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
-        return try files.filter { $0.pathExtension == "json" }.map { url in
+        var operations: [PendingGroupDeletion] = []
+        for url in files where url.pathExtension == "json" {
             let snapshot = try SafeFileIO.snapshot(at: url)
             guard let data = snapshot.data else {
                 throw ConfigEditError.io("无法读取分组操作记录：\(url.path)")
             }
-            return try JSONDecoder().decode(PendingGroupDeletion.self, from: data)
-        }.sorted { $0.name < $1.name }
+            if let operation = try? JSONDecoder().decode(PendingGroupDeletion.self, from: data) {
+                operations.append(operation)
+            } else {
+                try quarantine(url)
+            }
+        }
+        return operations.sorted { $0.name < $1.name }
+    }
+
+    /// An undecodable record cannot be resumed or rolled back. Keep its bytes under a name
+    /// `list()` ignores so it no longer blocks every later group operation.
+    private func quarantine(_ url: URL) throws {
+        let target = url.deletingPathExtension()
+            .appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+        guard url.path.withCString({ source in target.path.withCString { rename(source, $0) } }) == 0 else {
+            throw ConfigEditError.io("分组操作记录已损坏且无法隔离：\(url.path)，系统错误 \(errno)")
+        }
+        try syncDirectory()
     }
 
     func save(_ operation: PendingGroupDeletion) throws {
         try SafeFileIO.ensureDirectory(directoryURL)
         let url = url(for: operation)
+        let temporary = directoryURL.appendingPathComponent(".journal-\(UUID().uuidString).tmp")
         let data = try JSONEncoder().encode(operation)
-        let descriptor = url.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600) }
+        let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600) }
         guard descriptor >= 0 else {
             throw ConfigEditError.io("无法建立分组操作记录：\(url.path)")
         }
         var closed = false
-        var complete = false
         defer {
             if !closed { _ = Darwin.close(descriptor) }
-            if !complete { _ = url.path.withCString { unlink($0) } }
+            _ = temporary.path.withCString { unlink($0) }
         }
         try data.withUnsafeBytes { bytes in
             guard let base = bytes.baseAddress else { return }
@@ -218,8 +235,11 @@ private struct GroupDeletionJournalStore {
             throw ConfigEditError.io("关闭分组操作记录失败")
         }
         closed = true
+        // Publish only a complete, fsynced record; link() refuses to replace an existing one.
+        guard temporary.path.withCString({ source in url.path.withCString { link(source, $0) } }) == 0 else {
+            throw ConfigEditError.io("无法发布分组操作记录：\(url.path)，系统错误 \(errno)")
+        }
         try syncDirectory()
-        complete = true
     }
 
     func remove(_ operation: PendingGroupDeletion) throws {

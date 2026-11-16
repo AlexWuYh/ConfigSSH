@@ -229,4 +229,42 @@ final class GroupManagementTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: unexpected, encoding: .utf8), "other app wrote this")
         XCTAssertTrue(try service.pendingOperations().isEmpty)
     }
+
+    func testGroupDeletionRefusesHostFileThatAlsoContainsRules() throws {
+        let (writer, root) = try fixture()
+        try Data("Include config.d/*.conf\nInclude config.d/*/*.conf\n".utf8).write(to: root)
+        try writer.createGroup(named: "Work")
+        let file = writer.managedDirectoryURL.appendingPathComponent("Work/web.conf")
+        let original = Data("Host web\n  HostName web.example\nHost *.corp\n  User ops\n".utf8)
+        try original.write(to: file)
+        XCTAssertThrowsError(try writer.planGroupDeletion(named: "Work", from: ConfigReader(rootURL: root).scan()))
+        XCTAssertEqual(try Data(contentsOf: file), original)
+    }
+
+    func testTruncatedJournalIsQuarantinedAndDoesNotBlockLaterDeletions() throws {
+        let (writer, root) = try fixture()
+        let store = try MetadataStore(databaseURL: root.deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("metadata.sqlite"))
+        let service = GroupDeletionService(writer: writer, metadataStore: store)
+        let journalDirectory = writer.backups.directoryURL.appendingPathComponent("GroupOperations")
+        try FileManager.default.createDirectory(at: journalDirectory, withIntermediateDirectories: true)
+        let truncated = journalDirectory.appendingPathComponent("\(UUID().uuidString).json")
+        let garbage = Data("{\"id\":\"".utf8)
+        try garbage.write(to: truncated)
+        try Data("partial".utf8).write(to: journalDirectory.appendingPathComponent(".journal-\(UUID().uuidString).tmp"))
+
+        XCTAssertEqual(try service.pendingOperations().count, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: truncated.path))
+        let quarantined = try FileManager.default.contentsOfDirectory(atPath: journalDirectory.path)
+            .filter { $0.contains(".corrupt") }
+        XCTAssertEqual(quarantined.count, 1)
+        XCTAssertEqual(try Data(contentsOf: journalDirectory.appendingPathComponent(quarantined[0])), garbage)
+
+        try writer.createGroup(named: "Work")
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example", group: "Work")),
+                                          from: ConfigReader(rootURL: root).scan()))
+        try service.delete(writer.planGroupDeletion(named: "Work", from: ConfigReader(rootURL: root).scan()))
+        XCTAssertFalse(writer.groupDirectories().contains("Work"))
+        XCTAssertEqual(try service.pendingOperations().count, 0)
+    }
 }

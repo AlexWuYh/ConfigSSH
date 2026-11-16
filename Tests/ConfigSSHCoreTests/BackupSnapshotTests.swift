@@ -329,4 +329,37 @@ final class BackupSnapshotTests: XCTestCase {
                                              backupDirectory: fixture.home.appendingPathComponent("backups"))
             .planSnapshotRestore(try XCTUnwrap(index.records.first)))
     }
+
+    func testSnapshotRestoreRefusesTamperedManifestTargetingKeysOrUnrelatedFiles() throws {
+        let fixture = try fixture()
+        let ssh = fixture.root.deletingLastPathComponent()
+        let fakeKey = ssh.appendingPathComponent("id_demo")
+        let fakeKeyData = Data("-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n".utf8)
+        try fakeKeyData.write(to: fakeKey)
+        let notes = ssh.appendingPathComponent("notes.txt")
+        try Data("unrelated\n".utf8).write(to: notes)
+        let writer = ConfigWriter(rootURL: fixture.root, backupDirectory: fixture.home.appendingPathComponent("backups"))
+        let included = ssh.appendingPathComponent("hosts.conf").standardizedFileURL.path
+        let originalRoot = try Data(contentsOf: fixture.root)
+        for target in [fakeKey, notes, ssh.appendingPathComponent("authorized_keys"),
+                       ssh.appendingPathComponent("known_hosts")] {
+            let folder = fixture.home.appendingPathComponent("snapshots-\(UUID().uuidString)")
+            try originalRoot.write(to: fixture.root)
+            let archive = try BackupSnapshotService().create(scan: ConfigReader(rootURL: fixture.root).scan(),
+                                                             destination: .local(folder))
+            let manifestURL = archive.url.appendingPathComponent("manifest.json")
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any])
+            var entries = try XCTUnwrap(json["entries"] as? [[String: Any]])
+            let index = try XCTUnwrap(entries.firstIndex { ($0["sourcePath"] as? String) == included })
+            entries[index]["sourcePath"] = target.standardizedFileURL.path
+            json["entries"] = entries
+            try JSONSerialization.data(withJSONObject: json).write(to: manifestURL)
+            try Data("# changed\nInclude hosts.conf\n".utf8).write(to: fixture.root)
+            let record = try XCTUnwrap(BackupSnapshotService().list(in: folder).records.first)
+            XCTAssertThrowsError(try writer.planSnapshotRestore(record), "restore must refuse \(target.lastPathComponent)")
+        }
+        XCTAssertEqual(try Data(contentsOf: fakeKey), fakeKeyData)
+        XCTAssertEqual(try String(contentsOf: notes, encoding: .utf8), "unrelated\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ssh.appendingPathComponent("authorized_keys").path))
+    }
 }

@@ -26,6 +26,7 @@ package struct ConfigWriter: Sendable {
 
     package func commit(_ plan: ConfigChangePlan) throws -> CommitReceipt {
         guard !plan.changes.isEmpty else { throw ConfigEditError.invalid("没有需要保存的变更") }
+        for change in plan.changes { try assertSafeDestination(change.url) }
         for version in plan.checkedVersions { try SafeFileIO.assertCurrent(version) }
         var records: [BackupRecord] = []
         do {
@@ -41,6 +42,7 @@ package struct ConfigWriter: Sendable {
         do {
             for change in plan.changes {
                 do {
+                    try assertSafeDestination(change.url)
                     try SafeFileIO.apply(change)
                     applied.append(change)
                 } catch {
@@ -63,6 +65,7 @@ package struct ConfigWriter: Sendable {
             var rollbackFailed = false
             for change in applied.reversed() {
                 do {
+                    try assertSafeDestination(change.url)
                     let current = try SafeFileIO.snapshot(at: change.url).version
                     guard current.sha256 == change.after.map(SafeFileIO.hash) else {
                         rollbackFailed = true
@@ -132,6 +135,7 @@ package struct ConfigWriter: Sendable {
               configEntries.filter({ $0.sourcePath == rootURL.path }).count == 1 else {
             throw ConfigEditError.unsafe("快照缺少唯一的主配置文件，不能自动恢复")
         }
+        let currentSources = Set(ConfigReader(rootURL: rootURL).scan().sources.map { $0.url.standardizedFileURL.path })
         var versions = [manifest.version]
         var changes: [PlannedFileChange] = []
         var destinations: Set<String> = []
@@ -149,7 +153,10 @@ package struct ConfigWriter: Sendable {
                   target == rootURL || target.path.hasPrefix(rootURL.deletingLastPathComponent().path + "/") else {
                 throw ConfigEditError.unsafe("快照中的配置文件超出 ~/.ssh，不能自动恢复：\(entry.sourcePath)")
             }
-            if target != rootURL { try validateWritableSource(target) }
+            if target != rootURL {
+                try validateWritableSource(target)
+                try validateSnapshotDestination(target, currentSources: currentSources)
+            }
             let archived = try SafeFileIO.snapshot(at: record.url.appendingPathComponent(entry.backupFile))
             guard let archivedData = archived.data,
                   archivedData.count == entry.byteCount,
@@ -281,7 +288,8 @@ package struct ConfigWriter: Sendable {
             let insertion = globalInsertionOffset(in: before)
             let newline = lineEnding(in: before)
             let serialized = parameter.keyword == "IdentityFile" ? encodePath(value) : value
-            let inserted = Data("\(parameter.keyword) \(serialized)\(newline)".utf8)
+            let separator = insertion == before.count && before.last.map({ $0 != 0x0A }) == true ? newline : ""
+            let inserted = Data("\(separator)\(parameter.keyword) \(serialized)\(newline)".utf8)
             after.replaceSubrange(insertion..<insertion, with: inserted)
         } else {
             throw ConfigEditError.invalid("此全局参数尚未设置")
@@ -480,6 +488,7 @@ package struct ConfigWriter: Sendable {
             let deletesWholeFile = isManagedHostFile(host.sourceURL) &&
                 host.sourceURL.deletingPathExtension().lastPathComponent == host.alias &&
                 scan.hosts.filter({ $0.sourceURL == host.sourceURL }).count == 1 &&
+                !scan.rules.contains(where: { $0.sourceURL.standardizedFileURL == host.sourceURL.standardizedFileURL }) &&
                 String(data: source, encoding: .utf8)?.split(whereSeparator: \.isNewline).first(where: {
                     !$0.trimmingCharacters(in: .whitespaces).isEmpty &&
                     !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
@@ -538,6 +547,29 @@ package struct ConfigWriter: Sendable {
                 throw ConfigEditError.unsafe("主机源文件的目录路径包含符号链接：\(directory.path)")
             }
         }
+    }
+
+    /// Snapshot manifests live outside `~/.ssh` and are not trusted to choose arbitrary targets.
+    /// Allowed: managed `config.d` files, files the current config statically Includes, or a
+    /// not-yet-existing file whose name is not reserved for keys or OpenSSH state. Checked
+    /// before the target is read so key bytes never enter memory.
+    private func validateSnapshotDestination(_ target: URL, currentSources: Set<String>) throws {
+        if isManagedHostFile(target) || currentSources.contains(target.path) { return }
+        let name = target.lastPathComponent.lowercased()
+        let reserved = name.hasPrefix("authorized_keys") || name.hasPrefix("known_hosts") ||
+            name.hasPrefix("id_") || name.hasSuffix(".pub") || ["environment", "rc"].contains(name)
+        var info = stat()
+        let missing = lstat(target.path, &info) != 0 && errno == ENOENT
+        guard missing, !reserved else {
+            throw ConfigEditError.unsafe("快照目标不是当前配置引用的文件，或属于密钥/OpenSSH 保留文件，不能自动恢复：\(target.path)")
+        }
+    }
+
+    /// Re-validated at commit time: a directory on the path may have been swapped for a
+    /// symlink after the plan was previewed, and `lstat` on the leaf follows parent links.
+    private func assertSafeDestination(_ url: URL) throws {
+        try checkSSHDirectory()
+        try validateWritableSource(url.standardizedFileURL)
     }
 
     private func checkSSHDirectory() throws {
@@ -625,8 +657,8 @@ package struct ConfigWriter: Sendable {
                 throw ConfigEditError.unsafe("分组包含非独立主机文件，不能自动移动：\(file.path)")
             }
             let removal = try plan(.delete(hostID: host.id), from: scan)
-            guard let sourceChange = removal.changes.first else {
-                throw ConfigEditError.unsafe("无法准备主机移动：\(host.alias)")
+            guard let sourceChange = removal.changes.first, sourceChange.after == nil else {
+                throw ConfigEditError.unsafe("分组文件除主机外还包含其他规则，不能整体移动：\(file.path)")
             }
             let destination = managedDirectoryURL.appendingPathComponent(file.lastPathComponent)
             let target = try SafeFileIO.snapshot(at: destination)
