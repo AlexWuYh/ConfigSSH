@@ -43,7 +43,7 @@ package struct ConfigWriter: Sendable {
             for change in plan.changes {
                 do {
                     try assertSafeDestination(change.url)
-                    try SafeFileIO.apply(change)
+                    try SafeFileIO.apply(change, anchor: rootURL.deletingLastPathComponent())
                     applied.append(change)
                 } catch {
                     if let current = try? SafeFileIO.snapshot(at: change.url).version,
@@ -77,7 +77,7 @@ package struct ConfigWriter: Sendable {
                         after: change.before,
                         expectedVersion: current,
                         desiredMode: change.expectedVersion.mode
-                    ))
+                    ), anchor: rootURL.deletingLastPathComponent())
                 } catch {
                     rollbackFailed = true
                 }

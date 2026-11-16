@@ -574,4 +574,63 @@ final class ConfigWriterTests: XCTestCase {
         XCTAssertEqual(plan.changes.count, 1)
         XCTAssertFalse(plan.changes.contains { $0.url == paths.root })
     }
+
+    func testExternalEditBetweenCheckAndReplaceIsNeverOverwritten() throws {
+        let paths = try fixture()
+        try Data("# original\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let plan = try writer.planRootConfigReplacement(text: "# edited\n", from: ConfigReader(rootURL: paths.root).scan())
+        for external in ["# external, new inode\n", "# external, same inode\n"] {
+            let inPlace = external.contains("same inode")
+            SafeFileIO.testHookBeforeReplace = { url in
+                guard url == paths.root.standardizedFileURL else { return }
+                SafeFileIO.testHookBeforeReplace = nil
+                if inPlace {
+                    let handle = try! FileHandle(forWritingTo: url)
+                    try! handle.truncate(atOffset: 0)
+                    try! handle.write(contentsOf: Data(external.utf8))
+                    try! handle.close()
+                } else {
+                    try! Data(external.utf8).write(to: url, options: .atomic)
+                }
+            }
+            defer { SafeFileIO.testHookBeforeReplace = nil }
+            try Data("# original\n".utf8).write(to: paths.root)
+            let fresh = try writer.planRootConfigReplacement(text: "# edited\n", from: ConfigReader(rootURL: paths.root).scan())
+            XCTAssertThrowsError(try writer.commit(fresh), external)
+            XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8), external)
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: paths.root.deletingLastPathComponent().path)
+                .contains { $0.hasPrefix(".configssh-") }, "no temporary file may be left behind")
+        }
+        _ = plan
+    }
+
+    func testDirectorySwappedDuringApplyCannotRedirectWrite() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "web", hostName: "web.example", group: "Work")),
+                                          from: ConfigReader(rootURL: paths.root).scan()))
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        let plan = try writer.plan(.update(hostID: host.id, input: HostInput(alias: "web", hostName: "changed.example", group: "Work")),
+                                   from: scan)
+        let managed = writer.managedDirectoryURL
+        let decoy = paths.backup.deletingLastPathComponent().appendingPathComponent("decoy")
+        // A hard link shares the inode, so every version check on the decoy path still passes.
+        try FileManager.default.createDirectory(at: decoy.appendingPathComponent("Work"), withIntermediateDirectories: true)
+        let decoyFile = decoy.appendingPathComponent("Work/web.conf")
+        try FileManager.default.linkItem(at: managed.appendingPathComponent("Work/web.conf"), to: decoyFile)
+        let decoyBefore = try Data(contentsOf: decoyFile)
+        let moved = paths.backup.deletingLastPathComponent().appendingPathComponent("moved-config.d")
+        SafeFileIO.testHookBeforeApply = { url in
+            SafeFileIO.testHookBeforeApply = nil
+            try! FileManager.default.moveItem(at: managed, to: moved)
+            try! FileManager.default.createSymbolicLink(at: managed, withDestinationURL: decoy)
+        }
+        defer { SafeFileIO.testHookBeforeApply = nil }
+        _ = try? writer.commit(plan)
+        XCTAssertEqual(try Data(contentsOf: decoyFile), decoyBefore, "write must not follow the swapped-in symlink")
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: decoy.appendingPathComponent("Work").path)
+            .contains { $0.hasPrefix(".configssh-") })
+    }
 }
