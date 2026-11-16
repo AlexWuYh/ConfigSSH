@@ -151,3 +151,8 @@
 - GitHub 仓库简介与 `macos`、`swiftui`、`ssh`、`openssh`、`ssh-config`、`local-first` 标签已设置。`main`/PR 流水线使用 Xcode 27 runner 执行测试和未签名打包；推送 `vMAJOR.MINOR.PATCH` tag 时，发布流水线校验专业 Release Notes、运行测试、打包 ZIP 和 SHA-256，创建未签名 Pre-release。两条流水线均检查可达历史中不得含 `.ai/`。
 - 发布规范、Release Notes 模板及 `v0.1.0` 文案已提交；尚未创建 tag 或 Release，真实 tag 触发与 GitHub Release 资产上传仍待首次发布时验证。没有 Developer ID 证书或公证凭据，因此不能把自动产物称为正式公开下载包。
 - 首次远端 `main` 流水线（Actions run `43807291898`）已通过：公开历史检查、测试及未签名 `.app` 打包均成功；本机 `swift test` 95 项、Release 构建、Release Notes 校验及 actionlint 也已通过。Release tag 路径尚未触发，不据此宣称 Release 资产上传已验收。
+
+## 2026 年 11 月 16 日 README 截图复核
+
+- 逐张核对 README 的三张应用截图：主机详情和全局配置已使用新版蓝色 Open C 图标，密钥页仍是旧版图标。使用 Debug 专用 `CONFIGSSH_PREVIEW_ROOT` 与 `CONFIGSSH_PREVIEW_SECTION=keys` 从 `/tmp` 脱敏示例配置启动当前源码，重新截取真实密钥页，展示临时 Ed25519 公钥及其关联示例主机；将旧截图从公开文件树移除并更新 README 图片路径，避免继续显示旧图或使用合成图。
+- 新截图只包含 `example.net`、文档示例网段和临时目录中的密钥路径；不读取用户真实 `~/.ssh`、不执行 SSH 连接或 iCloud 操作。窗口截图为 1892 × 1352 PNG，README 所引用三张图片均已核对存在。

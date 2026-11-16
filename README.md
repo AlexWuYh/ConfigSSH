@@ -32,7 +32,7 @@ ConfigSSH 采用 **Native · Simple · Local First** 的方式工作：连接信
 
 ### 密钥索引
 
-![ConfigSSH 的密钥页面：选中临时生成的 Ed25519 示例公钥，右侧显示类型、指纹、文件路径和私钥存在状态](Assets/screenshots/keys.png)
+![ConfigSSH 的新版密钥页面：选中临时生成的 Ed25519 示例公钥，右侧显示类型、指纹、文件路径、私钥存在状态和关联主机 api](Assets/screenshots/keys-overview.png)
 
 密钥页索引公钥、展示引用关系和对应私钥是否存在；**不会读取私钥内容**。也可以在此生成新密钥，再从新增主机表单中选择。
 
