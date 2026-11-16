@@ -26,6 +26,7 @@ package struct ConfigWriter: Sendable {
 
     package func commit(_ plan: ConfigChangePlan) throws -> CommitReceipt {
         guard !plan.changes.isEmpty else { throw ConfigEditError.invalid("没有需要保存的变更") }
+        for change in plan.changes { try assertSafeDestination(change.url) }
         for version in plan.checkedVersions { try SafeFileIO.assertCurrent(version) }
         var records: [BackupRecord] = []
         do {
@@ -41,7 +42,8 @@ package struct ConfigWriter: Sendable {
         do {
             for change in plan.changes {
                 do {
-                    try SafeFileIO.apply(change)
+                    try assertSafeDestination(change.url)
+                    try SafeFileIO.apply(change, anchor: rootURL.deletingLastPathComponent())
                     applied.append(change)
                 } catch {
                     if let current = try? SafeFileIO.snapshot(at: change.url).version,
@@ -63,6 +65,7 @@ package struct ConfigWriter: Sendable {
             var rollbackFailed = false
             for change in applied.reversed() {
                 do {
+                    try assertSafeDestination(change.url)
                     let current = try SafeFileIO.snapshot(at: change.url).version
                     guard current.sha256 == change.after.map(SafeFileIO.hash) else {
                         rollbackFailed = true
@@ -72,8 +75,9 @@ package struct ConfigWriter: Sendable {
                         url: change.url,
                         before: change.after,
                         after: change.before,
-                        expectedVersion: current
-                    ))
+                        expectedVersion: current,
+                        desiredMode: change.expectedVersion.mode
+                    ), anchor: rootURL.deletingLastPathComponent())
                 } catch {
                     rollbackFailed = true
                 }
@@ -132,6 +136,7 @@ package struct ConfigWriter: Sendable {
               configEntries.filter({ $0.sourcePath == rootURL.path }).count == 1 else {
             throw ConfigEditError.unsafe("快照缺少唯一的主配置文件，不能自动恢复")
         }
+        let currentSources = Set(ConfigReader(rootURL: rootURL).scan().sources.map { $0.url.standardizedFileURL.path })
         var versions = [manifest.version]
         var changes: [PlannedFileChange] = []
         var destinations: Set<String> = []
@@ -149,7 +154,10 @@ package struct ConfigWriter: Sendable {
                   target == rootURL || target.path.hasPrefix(rootURL.deletingLastPathComponent().path + "/") else {
                 throw ConfigEditError.unsafe("快照中的配置文件超出 ~/.ssh，不能自动恢复：\(entry.sourcePath)")
             }
-            if target != rootURL { try validateWritableSource(target) }
+            if target != rootURL {
+                try validateWritableSource(target)
+                try validateSnapshotDestination(target, currentSources: currentSources)
+            }
             let archived = try SafeFileIO.snapshot(at: record.url.appendingPathComponent(entry.backupFile))
             guard let archivedData = archived.data,
                   archivedData.count == entry.byteCount,
@@ -193,7 +201,8 @@ package struct ConfigWriter: Sendable {
             guard !file.relativePath.hasPrefix("/"), !file.relativePath.contains("\\"),
                   !file.relativePath.contains("\0"),
                   components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-                  seen.insert(file.relativePath).inserted,
+                  // APFS is case-insensitive by default: Web.conf and web.conf are one file.
+                  seen.insert(file.relativePath.lowercased()).inserted,
                   file.content.count <= 16 * 1_024 * 1_024,
                   totalBytes <= 48 * 1_024 * 1_024 - file.content.count else {
                 throw ConfigEditError.unsafe("云端配置包含无效路径、重复文件或超出大小限制")
@@ -281,7 +290,8 @@ package struct ConfigWriter: Sendable {
             let insertion = globalInsertionOffset(in: before)
             let newline = lineEnding(in: before)
             let serialized = parameter.keyword == "IdentityFile" ? encodePath(value) : value
-            let inserted = Data("\(parameter.keyword) \(serialized)\(newline)".utf8)
+            let separator = insertion == before.count && before.last.map({ $0 != 0x0A }) == true ? newline : ""
+            let inserted = Data("\(separator)\(parameter.keyword) \(serialized)\(newline)".utf8)
             after.replaceSubrange(insertion..<insertion, with: inserted)
         } else {
             throw ConfigEditError.invalid("此全局参数尚未设置")
@@ -480,6 +490,7 @@ package struct ConfigWriter: Sendable {
             let deletesWholeFile = isManagedHostFile(host.sourceURL) &&
                 host.sourceURL.deletingPathExtension().lastPathComponent == host.alias &&
                 scan.hosts.filter({ $0.sourceURL == host.sourceURL }).count == 1 &&
+                !scan.rules.contains(where: { $0.sourceURL.standardizedFileURL == host.sourceURL.standardizedFileURL }) &&
                 String(data: source, encoding: .utf8)?.split(whereSeparator: \.isNewline).first(where: {
                     !$0.trimmingCharacters(in: .whitespaces).isEmpty &&
                     !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
@@ -538,6 +549,29 @@ package struct ConfigWriter: Sendable {
                 throw ConfigEditError.unsafe("主机源文件的目录路径包含符号链接：\(directory.path)")
             }
         }
+    }
+
+    /// Snapshot manifests live outside `~/.ssh` and are not trusted to choose arbitrary targets.
+    /// Allowed: managed `config.d` files, files the current config statically Includes, or a
+    /// not-yet-existing file whose name is not reserved for keys or OpenSSH state. Checked
+    /// before the target is read so key bytes never enter memory.
+    private func validateSnapshotDestination(_ target: URL, currentSources: Set<String>) throws {
+        if isManagedHostFile(target) || currentSources.contains(target.path) { return }
+        let name = target.lastPathComponent.lowercased()
+        let reserved = name.hasPrefix("authorized_keys") || name.hasPrefix("known_hosts") ||
+            name.hasPrefix("id_") || name.hasSuffix(".pub") || ["environment", "rc"].contains(name)
+        var info = stat()
+        let missing = lstat(target.path, &info) != 0 && errno == ENOENT
+        guard missing, !reserved else {
+            throw ConfigEditError.unsafe("快照目标不是当前配置引用的文件，或属于密钥/OpenSSH 保留文件，不能自动恢复：\(target.path)")
+        }
+    }
+
+    /// Re-validated at commit time: a directory on the path may have been swapped for a
+    /// symlink after the plan was previewed, and `lstat` on the leaf follows parent links.
+    private func assertSafeDestination(_ url: URL) throws {
+        try checkSSHDirectory()
+        try validateWritableSource(url.standardizedFileURL)
     }
 
     private func checkSSHDirectory() throws {
@@ -618,6 +652,7 @@ package struct ConfigWriter: Sendable {
         var rootAfter = root.data
 
         for file in files.sorted(by: { $0.path < $1.path }) {
+            if file.lastPathComponent == ".DS_Store" { continue }
             guard file.pathExtension.lowercased() == "conf",
                   let host = scan.hosts.first(where: { $0.sourceURL.standardizedFileURL == file.standardizedFileURL }),
                   scan.hosts.filter({ $0.sourceURL.standardizedFileURL == file.standardizedFileURL }).count == 1,
@@ -625,8 +660,8 @@ package struct ConfigWriter: Sendable {
                 throw ConfigEditError.unsafe("分组包含非独立主机文件，不能自动移动：\(file.path)")
             }
             let removal = try plan(.delete(hostID: host.id), from: scan)
-            guard let sourceChange = removal.changes.first else {
-                throw ConfigEditError.unsafe("无法准备主机移动：\(host.alias)")
+            guard let sourceChange = removal.changes.first, sourceChange.after == nil else {
+                throw ConfigEditError.unsafe("分组文件除主机外还包含其他规则，不能整体移动：\(file.path)")
             }
             let destination = managedDirectoryURL.appendingPathComponent(file.lastPathComponent)
             let target = try SafeFileIO.snapshot(at: destination)
@@ -661,6 +696,12 @@ package struct ConfigWriter: Sendable {
         guard let directory = plan.directoryURL else { return }
         guard directory.deletingLastPathComponent().standardizedFileURL.path == managedDirectoryURL.path else {
             throw ConfigEditError.unsafe("分组目录不在受管范围内")
+        }
+        // Finder metadata is the only non-host file a group may hold; drop it so rmdir works.
+        let finderMetadata = directory.appendingPathComponent(".DS_Store").path
+        var info = stat()
+        if lstat(finderMetadata, &info) == 0, info.st_mode & S_IFMT == S_IFREG {
+            _ = unlink(finderMetadata)
         }
         guard directory.path.withCString({ rmdir($0) }) == 0 else {
             throw ConfigEditError.io("主机可能已移动，但分组目录未能删除；请重新载入后检查：\(directory.path)")
@@ -727,13 +768,13 @@ package struct ConfigWriter: Sendable {
             let line = String(decoding: bytes[lineStart..<lineEnd], as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let lower = line.lowercased()
-            if lower.hasPrefix("host ") || lower.hasPrefix("match ") {
+            if startsWithKeyword(lower, "host") || startsWithKeyword(lower, "match") {
                 if !encounteredHostRule {
                     insertion = lineStart
                     encounteredHostRule = true
                 }
             }
-            if lower.hasPrefix("include ") || lower.hasPrefix("include=") {
+            if startsWithKeyword(lower, "include") {
                 let value = String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces)
                     .trimmingCharacters(in: CharacterSet(charactersIn: "="))
                     .trimmingCharacters(in: .whitespaces)
@@ -779,6 +820,13 @@ package struct ConfigWriter: Sendable {
         let separator = insertion > 0 && data[insertion - 1] != 10 ? newline : ""
         result.replaceSubrange(insertion..<insertion, with: Data((separator + missing.joined(separator: newline) + newline).utf8))
         return result
+    }
+
+    /// OpenSSH separates a keyword from its value with whitespace (space or tab) or `=`.
+    private func startsWithKeyword(_ lowercasedLine: String, _ keyword: String) -> Bool {
+        guard lowercasedLine.hasPrefix(keyword),
+              let next = lowercasedLine.dropFirst(keyword.count).first else { return false }
+        return next == " " || next == "\t" || next == "="
     }
 
     private func validate(_ input: HostInput, requireHostName: Bool) throws {
@@ -865,10 +913,17 @@ package struct ConfigWriter: Sendable {
             edits.append((line.range, try rewrite(line: line.text, keyword: name, value: value)))
         }
         if !additions.isEmpty {
+            // Insert right after the block's last option line, not at the end of its byte range:
+            // the range also holds trailing blank lines and the next block's leading comments.
             let newline = lineEnding(in: data)
-            let existing = data.subdata(in: host.byteRange)
-            let prefix = existing.isEmpty || existing.suffix(newline.utf8.count).elementsEqual(newline.utf8) ? "" : newline
-            edits.append((host.byteRange.upperBound..<host.byteRange.upperBound,
+            let lastNumber = max(host.sourceLine, host.explicitOptions.map(\.line).max() ?? host.sourceLine)
+            guard let lastLine = lines.first(where: { $0.number == lastNumber }),
+                  lastLine.range.lowerBound >= host.byteRange.lowerBound,
+                  lastLine.range.upperBound <= host.byteRange.upperBound else {
+                throw ConfigEditError.conflict("无法定位 Host 的最后一行，请重新载入")
+            }
+            let prefix = lastLine.text.hasSuffix("\n") ? "" : newline
+            edits.append((lastLine.range.upperBound..<lastLine.range.upperBound,
                           Data((prefix + additions.joined(separator: newline) + newline).utf8)))
         }
         var result = data

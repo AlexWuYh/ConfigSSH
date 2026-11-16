@@ -43,6 +43,13 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertTrue(any("占位符" in error for error in errors))
         self.assertTrue(any("未签名" in error for error in errors))
 
+    def test_angle_brackets_allowed_in_code_but_not_prose(self) -> None:
+        content = self.path.read_text(encoding="utf-8")
+        self.path.write_text(content + "- 运行 `validate-release-notes.py <tag>` 校验。\n", encoding="utf-8")
+        self.assertEqual(MODULE.validate("v0.1.0", self.root), [])
+        self.path.write_text(content + "- 新增 <功能名称>。\n", encoding="utf-8")
+        self.assertTrue(any("占位符" in error for error in MODULE.validate("v0.1.0", self.root)))
+
     def test_wrong_title_and_heading_order(self) -> None:
         content = self.path.read_text(encoding="utf-8")
         self.path.write_text(content.replace("# ConfigSSH v0.1.0", "# Wrong Title")

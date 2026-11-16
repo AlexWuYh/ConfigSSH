@@ -27,7 +27,7 @@ jobs:
       - name: Verify public history
         run: |
           set -euo pipefail
-          if git rev-list --objects HEAD | grep -E '^[0-9a-f]+ \.ai(/|$)' >/dev/null; then
+          if git rev-list --objects --all | grep -E '^[0-9a-f]+ \.ai(/|$)' >/dev/null; then
             echo 'The .ai/ directory must not be present in the public history.' >&2
             exit 1
           fi

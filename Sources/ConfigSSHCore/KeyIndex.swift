@@ -88,7 +88,7 @@ package struct KeyIndex {
                 publicKeyURL: publicURL,
                 publicKeyExists: parsed != nil,
                 privateKeyURL: privateURL,
-                privateKeyExists: FileManager.default.fileExists(atPath: privateURL.path),
+                privateKeyExists: Self.isExistingNonDirectory(privateURL),
                 associatedHosts: Array(privatePaths[publicPath] ?? []).sorted(),
                 isReferencedGlobally: globallyReferenced.contains(publicPath),
                 publicKeyText: parsed?.text
@@ -139,11 +139,20 @@ package struct KeyIndex {
         return sshDirectory.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
     }
 
+    private static func isExistingNonDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+
     private func parsePublicKey(at url: URL, issues: inout [String]) -> (type: String, fingerprint: String, text: String)? {
         do {
-            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey])
             guard values.isSymbolicLink != true, values.isRegularFile == true else {
                 issues.append("跳过非普通公钥文件：\(url.path)")
+                return nil
+            }
+            guard (values.fileSize ?? .max) <= 64 * 1024 else {
+                issues.append("公钥文件为空、过大或编码无效：\(url.path)")
                 return nil
             }
             let data = try Data(contentsOf: url)

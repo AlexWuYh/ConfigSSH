@@ -4,7 +4,7 @@
 
 ## 版本与触发
 
-- 仅使用 `vMAJOR.MINOR.PATCH` 格式，例如 `v0.1.0`。Tag 必须指向 `main` 上已提交、已测试的版本。
+- 仅使用 `vMAJOR.MINOR.PATCH` 格式，例如 `v0.1.0`。Tag 必须指向 `main` 上已提交、已测试的版本；发布流水线会校验 tag 提交是 `origin/main` 的祖先，否则直接失败。
 - 将正式文案写入 `.github/release-notes/<tag>.md`，例如 `.github/release-notes/v0.1.0.md`。先运行 `python3 scripts/validate-release-notes.py v0.1.0`。
 - 推送 tag 后，`.github/workflows/release.yml` 在 macOS arm64 runner 上运行测试、构建 `.app`、打包 ZIP、生成 SHA-256 校验文件，并上传到对应 GitHub Release。
 - `main` 分支和 Pull Request 另由 `.github/workflows/ci.yml` 在 Xcode 27 runner 上验证测试和未签名打包；它不创建 Release。发布 workflow 同样使用 Xcode 27 runner，避免本机与 CI 的主要工具链版本不一致。
@@ -25,7 +25,7 @@
 8. `## 已知限制`：尚未验收或暂不支持的行为与风险，不能省略。
 9. `## 校验与来源`：列出随 Release 提供的 `SHA256SUMS.txt`，说明如何校验，并指向仓库中的源码/tag。
 
-禁止 `TODO`、`TBD`、占位符、未经证实的“已完成同步/已登录服务器”等措辞。旧版明文 iCloud 快照不会自动清理，涉及云端配置的版本需说明；未签名包必须说明 Gatekeeper 提示与不可公开分发的现状。不得宣称真实 iCloud 多机、VoiceOver 或终端授权验收已通过，除非有对应记录。
+禁止 `TODO`、`TBD`、占位符（包括正文中裸露的 `<...>`；代码片段内的尖括号允许）、未经证实的“已完成同步/已登录服务器”等措辞。旧版明文 iCloud 快照不会自动清理，涉及云端配置的版本需说明；未签名包必须说明 Gatekeeper 提示与不可公开分发的现状。不得宣称真实 iCloud 多机、VoiceOver 或终端授权验收已通过，除非有对应记录。
 
 ## 发布检查清单
 
@@ -35,7 +35,7 @@ swift build -c release
 python3 scripts/validate-release-notes.py vX.Y.Z
 git diff --check
 git ls-files '.ai/**'  # 必须为空
-test -z "$(git rev-list --objects HEAD | grep -E '^[0-9a-f]+ \.ai(/|$)')"  # 可达历史也必须为空
+test -z "$(git rev-list --objects --all | grep -E '^[0-9a-f]+ \.ai(/|$)')"  # 可达历史也必须为空
 ```
 
 确认 Release Notes、版本、截图和源码一致后，再由维护者创建并推送 tag：
@@ -45,4 +45,4 @@ git tag -a vX.Y.Z -m "ConfigSSH vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-工作流完成后检查 `ConfigSSH-vX.Y.Z-unsigned-macos-arm64.zip` 与 `SHA256SUMS.txt` 均存在，下载并核对校验值，确认 Release 标记为 **Pre-release**。如构建失败，不手动上传来源不明的包；修复后重新运行工作流或使用新的 tag，并记录变更。
+工作流完成后检查 `ConfigSSH-vX.Y.Z-unsigned-macos-arm64.zip` 与 `SHA256SUMS.txt` 均存在，下载并核对校验值，确认 Release 标记为 **Pre-release**。如构建失败，不手动上传来源不明的包；修复后重新运行工作流或使用新的 tag，并记录变更。流水线不会覆盖已上传的资产（不使用 `--clobber`）：若 Release 中已有同名 ZIP，重跑会在上传步骤失败，此时应发布新的 PATCH tag，而不是替换他人可能已下载的文件。

@@ -67,8 +67,11 @@ package struct BackupStore: Sendable {
 
     package func remove(_ record: BackupRecord) {
         try? FileManager.default.removeItem(at: manifestURL(for: record.id))
-        if let path = record.backupPath {
-            try? FileManager.default.removeItem(atPath: path)
+        // Manifests are plain files in a user-writable folder; only ever delete the backup
+        // name `create` would have produced for this record, never a path read from JSON.
+        let expected = directoryURL.appendingPathComponent("\(record.id.uuidString).bak").standardizedFileURL
+        if let path = record.backupPath, URL(fileURLWithPath: path).standardizedFileURL == expected {
+            _ = expected.path.withCString { unlink($0) }
         }
     }
 

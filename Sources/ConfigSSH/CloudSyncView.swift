@@ -21,6 +21,8 @@ struct CloudSyncView: View {
     @State private var confirmation = ""
     @State private var pendingPush: CloudPushPlan?
     @State private var acceptsIncompletePush = false
+    @State private var ownSlotUnreadable = false
+    @State private var acceptsSlotReplacement = false
     @State private var pendingPull: CloudPullPlan?
     @State private var isBusy = false
     @State private var message: String?
@@ -86,8 +88,18 @@ struct CloudSyncView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         if pendingPush == nil {
-                            Button("预览推送") { preparePush() }
-                                .disabled(isBusy || deviceID == nil || passphrase.count < 12)
+                            HStack {
+                                Button("预览推送") { preparePush() }
+                                if ownSlotUnreadable {
+                                    Button("覆盖此设备的云端文件…") { preparePush(replaceUnreadableSlot: true) }
+                                }
+                            }
+                            .disabled(isBusy || deviceID == nil || passphrase.count < 12)
+                            if ownSlotUnreadable {
+                                Text("仅替换此 Mac 自己的 .cssh 文件；旧文件会先原样（仍加密）备份到本机，其他 Mac 的文件不受影响。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else if let pendingPush {
                             GroupBox("即将推送") {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -112,7 +124,13 @@ struct CloudSyncView: View {
                                     if !pendingPush.warnings.isEmpty {
                                         Toggle("我已了解：云端副本可能缺少这些 Include 文件", isOn: $acceptsIncompletePush)
                                     }
-                                    if pendingPush.expectedRemote.exists {
+                                    if pendingPush.replacesUnreadableSlot {
+                                        Label("此设备的旧云端文件无法用当前口令解密，将被新文件替换。旧文件会先备份到本机备份目录的 CloudSlots 子目录。",
+                                              systemImage: "exclamationmark.octagon")
+                                            .foregroundStyle(.red)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Toggle("我确认用新口令覆盖此设备的云端文件", isOn: $acceptsSlotReplacement)
+                                    } else if pendingPush.expectedRemote.exists {
                                         Label("旧云端文件将被覆盖，其他 Mac 的设备文件不会受影响。",
                                               systemImage: "exclamationmark.triangle")
                                             .foregroundStyle(.orange)
@@ -123,10 +141,12 @@ struct CloudSyncView: View {
                                             self.pendingPush = nil
                                             confirmation = ""
                                             acceptsIncompletePush = false
+                                            acceptsSlotReplacement = false
                                         }
                                         Button("确认推送", role: .destructive) { push(pendingPush) }
                                             .disabled(isBusy || confirmation != passphrase ||
-                                                (!pendingPush.warnings.isEmpty && !acceptsIncompletePush))
+                                                (!pendingPush.warnings.isEmpty && !acceptsIncompletePush) ||
+                                                (pendingPush.replacesUnreadableSlot && !acceptsSlotReplacement))
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,6 +290,8 @@ struct CloudSyncView: View {
                 pendingPull = nil
                 confirmation = ""
                 acceptsIncompletePush = false
+                acceptsSlotReplacement = false
+                ownSlotUnreadable = false
             }
         }
         .tint(BrandPalette.accent(for: colorScheme))
@@ -316,7 +338,7 @@ struct CloudSyncView: View {
         }
     }
 
-    private func preparePush() {
+    private func preparePush(replaceUnreadableSlot: Bool = false) {
         guard let deviceID else { return }
         isBusy = true
         let service = service
@@ -327,7 +349,8 @@ struct CloudSyncView: View {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<CloudPushPlan, Error> in
                 Result {
                     try service.planPush(scan: ConfigReader(rootURL: root).scan(), deviceID: deviceID,
-                                         deviceName: deviceName, passphrase: secret)
+                                         deviceName: deviceName, passphrase: secret,
+                                         replaceUnreadableSlot: replaceUnreadableSlot)
                 }
             }.value
             isBusy = false
@@ -336,7 +359,10 @@ struct CloudSyncView: View {
                 pendingPush = plan
                 message = nil
                 acceptsIncompletePush = false
-            case .failure(let error): report(error)
+                acceptsSlotReplacement = false
+            case .failure(let error):
+                if case CloudPushError.ownSlotUnreadable = error { ownSlotUnreadable = true }
+                report(error)
             }
         }
     }
@@ -344,19 +370,23 @@ struct CloudSyncView: View {
     private func push(_ plan: CloudPushPlan) {
         isBusy = true
         let service = service
+        let backupDirectory = writer.backups.directoryURL
         Task {
-            let failure = await Task.detached(priority: .userInitiated) { () -> String? in
-                do { try service.push(plan); return nil }
-                catch { return error.localizedDescription }
+            let outcome = await Task.detached(priority: .userInitiated) { () -> Result<URL?, Error> in
+                Result { try service.push(plan, replacedSlotBackupDirectory: backupDirectory) }
             }.value
             isBusy = false
             pendingPush = nil
             confirmation = ""
             acceptsIncompletePush = false
-            if let failure { report(failure) }
-            else {
+            acceptsSlotReplacement = false
+            switch outcome {
+            case .failure(let error): report(error)
+            case .success(let backup):
+                ownSlotUnreadable = false
                 isError = false
-                message = "已写入此设备的加密文件；请在 Finder 确认云端同步状态。"
+                message = backup.map { "已用新口令写入此设备的加密文件；旧文件已备份到 \($0.path)。请在 Finder 确认云端同步状态。" }
+                    ?? "已写入此设备的加密文件；请在 Finder 确认云端同步状态。"
                 reloadSlots()
             }
         }

@@ -459,4 +459,178 @@ final class ConfigWriterTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.root.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: writer.managedDirectoryURL.appendingPathComponent("demo.conf").path))
     }
+
+    func testDeletingManagedHostKeepsOtherRulesInSameFile() throws {
+        let paths = try fixture()
+        try Data("Include config.d/*.conf\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        try FileManager.default.createDirectory(at: writer.managedDirectoryURL, withIntermediateDirectories: true)
+        let file = writer.managedDirectoryURL.appendingPathComponent("web.conf")
+        for trailer in ["Host *.corp\n  User ops\n", "Match host db\n  User admin\n", "Host a b\n  Port 22\n"] {
+            let original = Data("Host web\n  HostName web.example\n\n\(trailer)".utf8)
+            try original.write(to: file)
+            let scan = ConfigReader(rootURL: paths.root).scan()
+            let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+            let plan = try writer.plan(.delete(hostID: host.id), from: scan)
+            let after = try XCTUnwrap(plan.changes.first?.after, "whole file deletion would drop: \(trailer)")
+            XCTAssertTrue(String(decoding: after, as: UTF8.self).hasSuffix(trailer))
+            XCTAssertFalse(String(decoding: after, as: UTF8.self).contains("Host web"))
+        }
+    }
+
+    func testGlobalOptionInsertAfterCommentWithoutTrailingNewline() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        for (original, expected) in [("# my config", "# my config\nServerAliveInterval 30\n"),
+                                     ("# a\r\n# b", "# a\r\n# b\r\nServerAliveInterval 30\r\n")] {
+            try Data(original.utf8).write(to: paths.root)
+            let scan = ConfigReader(rootURL: paths.root).scan()
+            _ = try writer.commit(writer.planGlobalOptionUpdate(keyword: "ServerAliveInterval", value: "30", from: scan))
+            XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8), expected)
+            XCTAssertEqual(ConfigReader(rootURL: paths.root).scan().globalOptions.map(\.keyword), ["ServerAliveInterval"])
+        }
+    }
+
+    func testCommitRefusesDirectorySwappedForSymlinkAfterPreview() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "web", hostName: "web.example", group: "Work")),
+                                          from: ConfigReader(rootURL: paths.root).scan()))
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        let plan = try writer.plan(.update(hostID: host.id, input: HostInput(alias: "web", hostName: "changed.example", group: "Work")),
+                                   from: scan)
+        let outside = paths.backup.deletingLastPathComponent().appendingPathComponent("outside")
+        for swapped in [writer.managedDirectoryURL.appendingPathComponent("Work"), writer.managedDirectoryURL] {
+            try FileManager.default.moveItem(at: swapped, to: outside)
+            try FileManager.default.createSymbolicLink(at: swapped, withDestinationURL: outside)
+            let moved = swapped == writer.managedDirectoryURL ? outside.appendingPathComponent("Work/web.conf")
+                                                               : outside.appendingPathComponent("web.conf")
+            let before = try Data(contentsOf: moved)
+            XCTAssertThrowsError(try writer.commit(plan), "swapped \(swapped.lastPathComponent)")
+            XCTAssertEqual(try Data(contentsOf: moved), before)
+            try FileManager.default.removeItem(at: swapped)
+            try FileManager.default.moveItem(at: outside, to: swapped)
+        }
+        XCTAssertEqual(try writer.backups.list().count, 2, "no backup may be taken through the symlink")
+    }
+
+    func testBackupPruneNeverDeletesFilesOutsideBackupDirectory() throws {
+        let paths = try fixture()
+        try Data("# root\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.planRootConfigReplacement(text: "# edited\n",
+                                                               from: ConfigReader(rootURL: paths.root).scan()))
+        let victim = paths.backup.deletingLastPathComponent().appendingPathComponent("victim.txt")
+        try Data("keep me\n".utf8).write(to: victim)
+        let id = UUID()
+        let planted = BackupRecord(id: id, sourcePath: paths.root.path, backupPath: victim.path,
+                                   beforeHash: nil, afterHash: nil, originalMode: nil,
+                                   originalModificationDate: nil, createdAt: Date(timeIntervalSince1970: 0),
+                                   reason: "planted")
+        try JSONEncoder().encode(planted).write(to: paths.backup.appendingPathComponent("\(id.uuidString).json"))
+        try writer.backups.prune(keeping: 1)
+        XCTAssertEqual(try String(contentsOf: victim, encoding: .utf8), "keep me\n")
+        XCTAssertEqual(try writer.backups.list().count, 1)
+    }
+
+    func testRollbackOfDeletedFileRestoresOriginalMode() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example")),
+                                          from: ConfigReader(rootURL: paths.root).scan()))
+        let file = writer.managedDirectoryURL.appendingPathComponent("demo.conf")
+        XCTAssertEqual(chmod(file.path, 0o644), 0)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let delete = try writer.plan(.delete(hostID: try XCTUnwrap(scan.hosts.first).id), from: scan)
+        XCTAssertNil(delete.changes.first?.after)
+        // A post-write verification failure forces the already-applied deletion to roll back.
+        XCTAssertThrowsError(try writer.commit(ConfigChangePlan(title: "t", targetAlias: "ghost",
+                                                                checkedVersions: delete.checkedVersions,
+                                                                changes: delete.changes)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: file.path))[.posixPermissions] as? Int, 0o644)
+    }
+
+    func testAddedOptionStaysAboveNextBlocksLeadingComment() throws {
+        let paths = try fixture()
+        try Data("Host web\n  HostName web.example\n\n# prod db\nHost db\n  HostName db.example\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        _ = try writer.commit(writer.plan(.update(hostID: host.id, input: HostInput(alias: "web", hostName: "web.example", port: "2222")),
+                                          from: scan))
+        XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8),
+                       "Host web\n  HostName web.example\n  Port 2222\n\n# prod db\nHost db\n  HostName db.example\n")
+    }
+
+    func testTabSeparatedIncludeIsRecognisedAndNotDuplicated() throws {
+        let paths = try fixture()
+        let root = "Include\tconfig.d/*.conf\nInclude\tconfig.d/*/*.conf\n"
+        try Data(root.utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let plan = try writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example")),
+                                   from: ConfigReader(rootURL: paths.root).scan())
+        XCTAssertEqual(plan.changes.count, 1)
+        XCTAssertFalse(plan.changes.contains { $0.url == paths.root })
+    }
+
+    func testExternalEditBetweenCheckAndReplaceIsNeverOverwritten() throws {
+        let paths = try fixture()
+        try Data("# original\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let plan = try writer.planRootConfigReplacement(text: "# edited\n", from: ConfigReader(rootURL: paths.root).scan())
+        for external in ["# external, new inode\n", "# external, same inode\n"] {
+            let inPlace = external.contains("same inode")
+            SafeFileIO.testHookBeforeReplace = { url in
+                guard url == paths.root.standardizedFileURL else { return }
+                SafeFileIO.testHookBeforeReplace = nil
+                if inPlace {
+                    let handle = try! FileHandle(forWritingTo: url)
+                    try! handle.truncate(atOffset: 0)
+                    try! handle.write(contentsOf: Data(external.utf8))
+                    try! handle.close()
+                } else {
+                    try! Data(external.utf8).write(to: url, options: .atomic)
+                }
+            }
+            defer { SafeFileIO.testHookBeforeReplace = nil }
+            try Data("# original\n".utf8).write(to: paths.root)
+            let fresh = try writer.planRootConfigReplacement(text: "# edited\n", from: ConfigReader(rootURL: paths.root).scan())
+            XCTAssertThrowsError(try writer.commit(fresh), external)
+            XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8), external)
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: paths.root.deletingLastPathComponent().path)
+                .contains { $0.hasPrefix(".configssh-") }, "no temporary file may be left behind")
+        }
+        _ = plan
+    }
+
+    func testDirectorySwappedDuringApplyCannotRedirectWrite() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "web", hostName: "web.example", group: "Work")),
+                                          from: ConfigReader(rootURL: paths.root).scan()))
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        let plan = try writer.plan(.update(hostID: host.id, input: HostInput(alias: "web", hostName: "changed.example", group: "Work")),
+                                   from: scan)
+        let managed = writer.managedDirectoryURL
+        let decoy = paths.backup.deletingLastPathComponent().appendingPathComponent("decoy")
+        // A hard link shares the inode, so every version check on the decoy path still passes.
+        try FileManager.default.createDirectory(at: decoy.appendingPathComponent("Work"), withIntermediateDirectories: true)
+        let decoyFile = decoy.appendingPathComponent("Work/web.conf")
+        try FileManager.default.linkItem(at: managed.appendingPathComponent("Work/web.conf"), to: decoyFile)
+        let decoyBefore = try Data(contentsOf: decoyFile)
+        let moved = paths.backup.deletingLastPathComponent().appendingPathComponent("moved-config.d")
+        SafeFileIO.testHookBeforeApply = { url in
+            SafeFileIO.testHookBeforeApply = nil
+            try! FileManager.default.moveItem(at: managed, to: moved)
+            try! FileManager.default.createSymbolicLink(at: managed, withDestinationURL: decoy)
+        }
+        defer { SafeFileIO.testHookBeforeApply = nil }
+        _ = try? writer.commit(plan)
+        XCTAssertEqual(try Data(contentsOf: decoyFile), decoyBefore, "write must not follow the swapped-in symlink")
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: decoy.appendingPathComponent("Work").path)
+            .contains { $0.hasPrefix(".configssh-") })
+    }
 }

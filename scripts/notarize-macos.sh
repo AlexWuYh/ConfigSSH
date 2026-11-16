@@ -16,7 +16,7 @@ fi
 codesign --verify --deep --strict "$app_path"
 temporary_dir="$(mktemp -d -t configssh-notary)"
 archive="$temporary_dir/ConfigSSH.zip"
-trap 'if [[ -e "$archive" ]]; then rm "$archive"; fi; rmdir "$temporary_dir"' EXIT
+trap 'rm -rf -- "$temporary_dir"' EXIT
 ditto -c -k --keepParent "$app_path" "$archive"
 xcrun notarytool submit "$archive" --keychain-profile "$CONFIGSSH_NOTARY_PROFILE" --wait
 xcrun stapler staple "$app_path"

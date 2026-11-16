@@ -98,6 +98,22 @@ package struct CloudPushPlan: Sendable {
     package let fileCount: Int
     package let skippedSources: [String]
     package let warnings: [String]
+    /// True when this device's existing cloud file could not be decrypted with the given
+    /// passphrase and the user explicitly chose to replace it. Push then requires a local
+    /// backup location for the old (still encrypted) bytes.
+    package var replacesUnreadableSlot = false
+    package var previousRemoteData: Data?
+}
+
+package enum CloudPushError: Error, LocalizedError {
+    case ownSlotUnreadable(String)
+
+    package var errorDescription: String? {
+        switch self {
+        case .ownSlotUnreadable(let detail):
+            return "此设备已有的云端文件无法用当前口令解密（\(detail)）。若口令已更换或文件损坏，可选择覆盖此设备的云端文件；旧文件会先备份到本机。"
+        }
+    }
 }
 
 package struct CloudPullPlan: Sendable {
@@ -165,7 +181,7 @@ package struct CloudConfigSyncService: Sendable {
     }
 
     package func planPush(scan: ConfigScan, deviceID: UUID, deviceName: String,
-                          passphrase: String) throws -> CloudPushPlan {
+                          passphrase: String, replaceUnreadableSlot: Bool = false) throws -> CloudPushPlan {
         try validateFolder(create: true)
         guard scan.availability == .available, !scan.sources.isEmpty else {
             throw ConfigEditError.invalid("没有可推送的 SSH 配置")
@@ -210,8 +226,16 @@ package struct CloudConfigSyncService: Sendable {
         let encrypted = try CloudConfigCrypto.encrypt(archive, passphrase: passphrase)
         let slot = try ownSlot(deviceID)
         let remote = try coordinatedSnapshot(slot.url)
+        var replacesUnreadable = false
         if let existing = remote.data {
-            _ = try CloudConfigCrypto.decrypt(existing, deviceID: deviceID, passphrase: passphrase)
+            do {
+                _ = try CloudConfigCrypto.decrypt(existing, deviceID: deviceID, passphrase: passphrase)
+            } catch {
+                guard replaceUnreadableSlot else {
+                    throw CloudPushError.ownSlotUnreadable(error.localizedDescription)
+                }
+                replacesUnreadable = true
+            }
         }
         var warnings: [String] = []
         if !skippedSources.isEmpty {
@@ -221,20 +245,72 @@ package struct CloudConfigSyncService: Sendable {
         if !includeIssues.isEmpty {
             warnings.append("另有 \(includeIssues.count) 条 Include 解析告警；请检查配置是否完整。")
         }
-        return CloudPushPlan(slot: slot, expectedRemote: remote.version, localVersions: versions,
-                             encryptedData: encrypted, fileCount: files.count,
-                             skippedSources: skippedSources.sorted(), warnings: warnings)
+        var plan = CloudPushPlan(slot: slot, expectedRemote: remote.version, localVersions: versions,
+                                 encryptedData: encrypted, fileCount: files.count,
+                                 skippedSources: skippedSources.sorted(), warnings: warnings)
+        if replacesUnreadable {
+            plan.replacesUnreadableSlot = true
+            plan.previousRemoteData = remote.data
+        }
+        return plan
     }
 
-    package func push(_ plan: CloudPushPlan) throws {
+    /// Writes this device's encrypted file. When the plan replaces an undecryptable slot, the
+    /// old encrypted bytes are first saved under `replacedSlotBackupDirectory` and that URL
+    /// is returned. Other devices' files are never touched.
+    @discardableResult
+    package func push(_ plan: CloudPushPlan, replacedSlotBackupDirectory: URL? = nil) throws -> URL? {
         try validateFolder(create: true)
         guard plan.slot.url == (try ownSlot(plan.slot.deviceID)).url else {
             throw ConfigEditError.unsafe("只能推送到当前设备自己的云端文件")
         }
         for version in plan.localVersions { try SafeFileIO.assertCurrent(version) }
+        var backupURL: URL?
+        if plan.replacesUnreadableSlot {
+            guard let directory = replacedSlotBackupDirectory, let previous = plan.previousRemoteData,
+                  SafeFileIO.hash(previous) == plan.expectedRemote.sha256 else {
+                throw ConfigEditError.unsafe("覆盖无法解密的云端文件前必须先在本机备份旧文件")
+            }
+            guard try coordinatedSnapshot(plan.slot.url).version.sha256 == plan.expectedRemote.sha256 else {
+                throw ConfigEditError.conflict("此设备的云端文件自预览后已变化，请重新预览")
+            }
+            backupURL = try saveReplacedSlot(previous, deviceID: plan.slot.deviceID, in: directory)
+        }
         let devices = plan.slot.url.deletingLastPathComponent()
         try SafeFileIO.ensureDirectory(devices)
-        try coordinatedWrite(plan.slot.url, expected: plan.expectedRemote, data: plan.encryptedData)
+        do {
+            try coordinatedWrite(plan.slot.url, expected: plan.expectedRemote, data: plan.encryptedData)
+        } catch {
+            if let backupURL { _ = backupURL.path.withCString { unlink($0) } }
+            throw error
+        }
+        return backupURL
+    }
+
+    private func saveReplacedSlot(_ data: Data, deviceID: UUID, in directory: URL) throws -> URL {
+        let folder = directory.appendingPathComponent("CloudSlots")
+        try SafeFileIO.ensureDirectory(folder)
+        let stamp = Int(Date().timeIntervalSince1970)
+        let url = folder.appendingPathComponent("\(deviceID.uuidString.lowercased())-\(stamp)-\(UUID().uuidString.prefix(8)).cssh")
+        let descriptor = url.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600) }
+        guard descriptor >= 0 else { throw ConfigEditError.io("无法建立云端文件备份：\(url.path)") }
+        var complete = false
+        defer {
+            _ = Darwin.close(descriptor)
+            if !complete { _ = url.path.withCString { unlink($0) } }
+        }
+        try data.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+                guard count > 0 else { throw ConfigEditError.io("写入云端文件备份失败") }
+                offset += count
+            }
+        }
+        guard fsync(descriptor) == 0 else { throw ConfigEditError.io("同步云端文件备份失败") }
+        complete = true
+        return url
     }
 
     package func planPull(slot: CloudConfigSlot, writer: ConfigWriter,

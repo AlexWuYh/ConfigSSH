@@ -17,7 +17,7 @@ final class TerminalLaunchService {
     private var cached: [String: TerminalCapability] = [:]
 
     func capabilities() -> [TerminalCapability] {
-        TerminalCatalog.shared.installed().map { profile in
+        (TerminalCatalog.shared.cachedProfiles ?? []).map { profile in
             cached[Self.cacheKey(for: profile)] ?? TerminalCapability(
                 profile: profile, supportsWindow: false, supportsTab: false,
                 explanation: "正在检测终端启动方式…"
@@ -26,7 +26,7 @@ final class TerminalLaunchService {
     }
 
     func refreshCapabilities() async -> [TerminalCapability] {
-        let profiles = TerminalCatalog.shared.installed()
+        let profiles = await TerminalCatalog.shared.loadInstalled()
         let missing = profiles.filter { cached[Self.cacheKey(for: $0)] == nil }
         if !missing.isEmpty {
             let inspected = await Task.detached(priority: .utility) {
@@ -122,7 +122,8 @@ final class TerminalLaunchService {
                 throw TerminalLaunchError.failed("\(profile.displayName) 启动失败：\(result)")
             }
         case .appleScript(let source):
-            let detail = await Task.detached(priority: .userInitiated) { () -> String? in
+            // NSAppleScript is documented as main-thread only; this service is @MainActor.
+            let detail: String? = {
                 guard let script = NSAppleScript(source: source) else {
                     return "无法创建终端启动脚本"
                 }
@@ -130,7 +131,7 @@ final class TerminalLaunchService {
                 _ = script.executeAndReturnError(&errorInfo)
                 guard let errorInfo else { return nil }
                 return errorInfo["NSAppleScriptErrorMessage"] as? String ?? "请检查 macOS 自动化权限"
-            }.value
+            }()
             if let detail {
                 throw TerminalLaunchError.failed("\(profile.displayName) 未接收启动请求：\(detail)")
             }
