@@ -10,7 +10,7 @@ Manage SSH Config Visually. Connect Effortlessly.
 
 </div>
 
-![ConfigSSH 的全部主机页面：左侧功能导航，中部按 Engineering 和 Personal 分组并高亮 api 主机，右侧展示 api 的 HostName、User、Port、配置来源和分组](Assets/screenshots/hosts.png)
+![ConfigSSH 的全部主机页面：左侧功能导航，中部按 Engineering 和 Personal 分组并高亮 api 主机，右侧展示 api 的 HostName、User、Port、IdentityFile、IdentitiesOnly、配置来源和分组](Assets/screenshots/hosts.png)
 
 > [!NOTE]
 > ConfigSSH 目前是**预览版**：只能从源码构建，或使用未签名的预发布包。详见[已知限制](#已知限制)。
