@@ -37,6 +37,7 @@ struct HostEditorView: View {
     @State private var errorMessage: String?
     @State private var diskComparison: String?
     @State private var showsKeyPicker = false
+    @State private var isReloading = false
 
     init(mode: HostEditorMode, scan: ConfigScan, writer: ConfigWriter, availableKeys: [PublicKeyRecord],
          availableGroups: [String],
@@ -139,11 +140,21 @@ struct HostEditorView: View {
                         }
                         HStack {
                             Button("重新载入并保留草稿") {
-                                workingScan = ConfigReader(rootURL: writer.rootURL).scan()
-                                plan = nil
-                                self.errorMessage = nil
-                                diskComparison = nil
+                                let root = writer.rootURL
+                                isReloading = true
+                                Task {
+                                    let refreshed = await Task.detached(priority: .userInitiated) {
+                                        ConfigReader(rootURL: root).scan()
+                                    }.value
+                                    workingScan = refreshed
+                                    plan = nil
+                                    self.errorMessage = nil
+                                    diskComparison = nil
+                                    isReloading = false
+                                }
                             }
+                            .disabled(isReloading)
+                            if isReloading { ProgressView().controlSize(.small) }
                             Spacer()
                         }
                     }

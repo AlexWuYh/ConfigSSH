@@ -461,10 +461,13 @@ struct SettingsView: View {
 
     private func refreshTerminals() {
         terminalProbeTask?.cancel()
-        profiles = TerminalCatalog.shared.installed()
+        profiles = TerminalCatalog.shared.cachedProfiles ?? []
         terminalCapabilities = Dictionary(uniqueKeysWithValues:
             launchService.capabilities().map { ($0.id, $0) })
         terminalProbeTask = Task {
+            let installed = await TerminalCatalog.shared.loadInstalled()
+            if Task.isCancelled { return }
+            profiles = installed
             let loaded = await launchService.refreshCapabilities()
             if Task.isCancelled { return }
             terminalCapabilities = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })

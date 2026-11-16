@@ -17,7 +17,7 @@ final class TerminalLaunchService {
     private var cached: [String: TerminalCapability] = [:]
 
     func capabilities() -> [TerminalCapability] {
-        TerminalCatalog.shared.installed().map { profile in
+        (TerminalCatalog.shared.cachedProfiles ?? []).map { profile in
             cached[Self.cacheKey(for: profile)] ?? TerminalCapability(
                 profile: profile, supportsWindow: false, supportsTab: false,
                 explanation: "正在检测终端启动方式…"
@@ -26,7 +26,7 @@ final class TerminalLaunchService {
     }
 
     func refreshCapabilities() async -> [TerminalCapability] {
-        let profiles = TerminalCatalog.shared.installed()
+        let profiles = await TerminalCatalog.shared.loadInstalled()
         let missing = profiles.filter { cached[Self.cacheKey(for: $0)] == nil }
         if !missing.isEmpty {
             let inspected = await Task.detached(priority: .utility) {

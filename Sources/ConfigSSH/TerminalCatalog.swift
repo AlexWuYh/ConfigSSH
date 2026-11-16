@@ -11,24 +11,53 @@ final class TerminalCatalog {
     static let shared = TerminalCatalog()
     private let storageKey = "terminalProfilesV1"
     private var cachedInstalled: [TerminalProfile]?
+    private var loading: Task<[TerminalProfile], Never>?
+    private var generation = 0
+
+    private struct DiscoveredApp: Sendable {
+        let url: URL
+        let identifier: String
+        let name: String
+    }
 
     private init() { }
 
+    /// Profiles already discovered, without touching the disk. `nil` until the first load.
+    var cachedProfiles: [TerminalProfile]? { cachedInstalled }
+
+    /// Synchronous fallback for call sites that must validate immediately (e.g. saving a
+    /// profile). UI refreshes use `loadInstalled()` so the app scan stays off the main actor.
     func installed() -> [TerminalProfile] {
         if let cachedInstalled { return cachedInstalled }
+        let sorted = profiles(from: Self.discoverApplications())
+        cachedInstalled = sorted
+        return sorted
+    }
+
+    func loadInstalled() async -> [TerminalProfile] {
+        if let cachedInstalled { return cachedInstalled }
+        if let loading { return await loading.value }
+        let started = generation
+        let task = Task { @MainActor [weak self] () -> [TerminalProfile] in
+            let discovered = await Task.detached(priority: .utility) { Self.discoverApplications() }.value
+            guard let self else { return [] }
+            let built = self.profiles(from: discovered)
+            if self.generation == started { self.cachedInstalled = built }
+            return built
+        }
+        loading = task
+        let result = await task.value
+        if generation == started { loading = nil }
+        return cachedInstalled ?? result
+    }
+
+    private func profiles(from discovered: [DiscoveredApp]) -> [TerminalProfile] {
         let saved = savedProfiles()
-        let applications = applicationURLs()
         var profiles: [TerminalProfile] = []
-        for url in applications {
-            guard let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
-                  isTerminal(bundle: bundle) else { continue }
-            let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
-                ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
-                ?? url.deletingPathExtension().lastPathComponent
-            let detected = defaultProfile(identifier: identifier, name: name, url: url)
-            var profile = saved[identifier] ?? detected
-            profile.appPath = url.path
-            profile.displayName = name
+        for app in discovered {
+            var profile = saved[app.identifier] ?? defaultProfile(identifier: app.identifier, name: app.name, url: app.url)
+            profile.appPath = app.url.path
+            profile.displayName = app.name
             profiles.append(profile)
         }
         for profile in saved.values where !profiles.contains(where: { $0.id == profile.id }) {
@@ -36,13 +65,24 @@ final class TerminalCatalog {
                 profiles.append(profile)
             }
         }
-        let sorted = profiles.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
-        cachedInstalled = sorted
-        return sorted
+        return profiles.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    private nonisolated static func discoverApplications() -> [DiscoveredApp] {
+        applicationURLs().compactMap { url in
+            guard let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
+                  isTerminal(bundle: bundle) else { return nil }
+            let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                ?? url.deletingPathExtension().lastPathComponent
+            return DiscoveredApp(url: url, identifier: identifier, name: name)
+        }
     }
 
     func refresh() {
         cachedInstalled = nil
+        loading = nil
+        generation += 1
         NotificationCenter.default.post(name: .configSSHTerminalProfilesChanged, object: nil)
     }
 
@@ -83,7 +123,7 @@ final class TerminalCatalog {
         return profiles.reduce(into: [:]) { $0[$1.id] = $1 }
     }
 
-    private func applicationURLs() -> [URL] {
+    private nonisolated static func applicationURLs() -> [URL] {
         var found: [String: URL] = [:]
         let folders = [URL(fileURLWithPath: "/Applications"),
                        URL(fileURLWithPath: "/Applications/Utilities"),
@@ -112,7 +152,7 @@ final class TerminalCatalog {
         return Array(found.values)
     }
 
-    private func isTerminal(bundle: Bundle) -> Bool {
+    private nonisolated static func isTerminal(bundle: Bundle) -> Bool {
         let identifier = bundle.bundleIdentifier ?? ""
         if ["com.apple.Terminal", "com.mitchellh.ghostty", "io.appmakes.otty"].contains(identifier) { return true }
         let category = (bundle.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String ?? "").lowercased()

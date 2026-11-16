@@ -263,6 +263,9 @@ struct RootConfigEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var text: String
+    /// The scan the draft was loaded from. `scan` is replaced whenever the parent reloads; the
+    /// plan must keep comparing against the draft's own base so external edits raise a conflict.
+    @State private var baseScan: ConfigScan
     @State private var plan: ConfigChangePlan?
     @State private var errorMessage: String?
 
@@ -272,6 +275,14 @@ struct RootConfigEditorView: View {
         self.onCommit = onCommit
         let data = scan.sources.first { $0.url.standardizedFileURL == writer.rootURL }?.data
         _text = State(initialValue: data.flatMap { String(data: $0, encoding: .utf8) } ?? "")
+        _baseScan = State(initialValue: scan)
+    }
+
+    private var rootChangedExternally: Bool {
+        func rootHash(_ scan: ConfigScan) -> String? {
+            scan.sources.first { $0.url.standardizedFileURL == writer.rootURL }?.sha256
+        }
+        return rootHash(scan) != rootHash(baseScan) || scan.availability != baseScan.availability
     }
 
     var body: some View {
@@ -323,6 +334,12 @@ struct RootConfigEditorView: View {
                     }
                     .padding(20)
                 }
+                if rootChangedExternally {
+                    Label("主配置已在外部变化；当前草稿基于旧版本，保存时会提示冲突。请复制草稿后关闭并重新打开。",
+                          systemImage: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                        .padding(12)
+                }
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
@@ -350,7 +367,7 @@ struct RootConfigEditorView: View {
 
     private func prepare() {
         do {
-            plan = try writer.planRootConfigReplacement(text: text, from: scan)
+            plan = try writer.planRootConfigReplacement(text: text, from: baseScan)
             errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
