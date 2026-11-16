@@ -43,7 +43,7 @@ Manage SSH Config Visually. Connect Effortlessly.
 | 功能 | 你可以做什么 |
 |---|---|
 | 🗂 **主机管理** | 按分组浏览，支持搜索、收藏和折叠；可以创建空分组，或在分组旁直接新增主机 |
-| ✏️ **安全编辑** | 用表单编辑常见字段，或直接编辑 `config` 原文；保存前预览差异，写入前备份 |
+| ✏️ **安全编辑** | 用表单编辑 HostName、User、Port、IdentityFile、IdentitiesOnly、ProxyJump 等常用字段，或直接编辑 `config` 原文；保存前预览差异，写入前备份 |
 | ⚡️ **快速连接** | 双击主机即可连接；`⌘K` 打开快速连接面板，菜单栏图标和可选的全局快捷键也能打开 |
 | 🖥 **终端选择** | 自动识别 Terminal、Ghostty、Otty，其他终端可手动配置；支持按主机选择新窗口或新标签页 |
 | 🔑 **密钥管理** | 索引公钥并显示被哪些主机引用；生成新的 Ed25519/RSA 密钥，并在新增主机时直接选用 |
@@ -118,6 +118,9 @@ ConfigSSH 启动后会读取 `~/.ssh/config` 及其能访问的 `Include` 文件
 2. 你确认后，它才会写入文件并建立备份。
 
 新主机保存为独立文件，例如 `~/.ssh/config.d/api.conf`；如果选择了分组，则保存到 `~/.ssh/config.d/Work/api.conf`。
+
+> [!TIP]
+> 如果 ssh-agent 里有很多密钥，连接时出现 “Too many authentication failures”，可以把 **IdentitiesOnly** 设为 `yes`，这样 SSH 只会使用这台主机指定的密钥。开启前需要先填写或选择 IdentityFile；没有密钥时，应用不允许开启，并会提示原因。
 
 ### 3. 连接主机
 

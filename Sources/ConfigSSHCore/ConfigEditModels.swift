@@ -1,5 +1,22 @@
 import Foundation
 
+/// Host-level `IdentitiesOnly`. `.unset` writes nothing and inherits OpenSSH's default (no).
+package enum IdentitiesOnlyChoice: String, CaseIterable, Sendable {
+    case unset = ""
+    case yes
+    case no
+
+    /// Maps an OpenSSH flag value; returns nil for anything ssh would not accept as a flag.
+    package init?(configValue: String) {
+        switch configValue.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "": self = .unset
+        case "yes", "true": self = .yes
+        case "no", "false": self = .no
+        default: return nil
+        }
+    }
+}
+
 package struct HostInput: Equatable {
     package var alias: String
     package var hostName: String
@@ -8,6 +25,7 @@ package struct HostInput: Equatable {
     package var identityFile: String
     package var proxyJump: String
     package var group: String
+    package var identitiesOnly: IdentitiesOnlyChoice
 
     package init(
         alias: String = "",
@@ -16,7 +34,8 @@ package struct HostInput: Equatable {
         port: String = "22",
         identityFile: String = "",
         proxyJump: String = "",
-        group: String = ""
+        group: String = "",
+        identitiesOnly: IdentitiesOnlyChoice = .unset
     ) {
         self.alias = alias
         self.hostName = hostName
@@ -25,6 +44,7 @@ package struct HostInput: Equatable {
         self.identityFile = identityFile
         self.proxyJump = proxyJump
         self.group = group
+        self.identitiesOnly = identitiesOnly
     }
 
     package init(host: HostRecord) {
@@ -35,7 +55,8 @@ package struct HostInput: Equatable {
             port: host.port ?? "",
             identityFile: host.option("IdentityFile") ?? "",
             proxyJump: host.option("ProxyJump") ?? "",
-            group: host.configGroup ?? ""
+            group: host.configGroup ?? "",
+            identitiesOnly: host.option("IdentitiesOnly").flatMap(IdentitiesOnlyChoice.init(configValue:)) ?? .unset
         )
     }
 }

@@ -633,4 +633,59 @@ final class ConfigWriterTests: XCTestCase {
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: decoy.appendingPathComponent("Work").path)
             .contains { $0.hasPrefix(".configssh-") })
     }
+
+    func testIdentitiesOnlyRequiresIdentityFileWhenAdding() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        XCTAssertThrowsError(try writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example",
+                                                            identitiesOnly: .yes)), from: scan)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("IdentityFile"), error.localizedDescription)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.root.path))
+
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example",
+                                                         identityFile: "~/.ssh/id_demo", identitiesOnly: .yes)),
+                                          from: scan))
+        XCTAssertEqual(try String(contentsOf: writer.managedDirectoryURL.appendingPathComponent("demo.conf"), encoding: .utf8),
+                       "Host demo\n  HostName demo.example\n  Port 22\n  IdentityFile ~/.ssh/id_demo\n  IdentitiesOnly yes\n")
+        let host = try XCTUnwrap(ConfigReader(rootURL: paths.root).scan().hosts.first)
+        XCTAssertEqual(HostInput(host: host).identitiesOnly, .yes)
+    }
+
+    func testIdentitiesOnlyCanBeTurnedOnOffAndUnsetOnExistingHost() throws {
+        let paths = try fixture()
+        try Data("Host web\n  HostName web.example\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        func edit(_ change: (inout HostInput) -> Void) throws {
+            let scan = ConfigReader(rootURL: paths.root).scan()
+            let host = try XCTUnwrap(scan.hosts.first)
+            var input = HostInput(host: host)
+            change(&input)
+            _ = try writer.commit(writer.plan(.update(hostID: host.id, input: input), from: scan))
+        }
+        XCTAssertThrowsError(try edit { $0.identitiesOnly = .yes })
+        try edit { $0.identityFile = "~/.ssh/id_web"; $0.identitiesOnly = .yes }
+        XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8),
+                       "Host web\n  HostName web.example\n  IdentityFile ~/.ssh/id_web\n  IdentitiesOnly yes\n")
+        XCTAssertThrowsError(try edit { $0.identityFile = "" }, "removing the key while IdentitiesOnly is on must be refused")
+        try edit { $0.identitiesOnly = .no }
+        XCTAssertTrue(try String(contentsOf: paths.root, encoding: .utf8).contains("  IdentitiesOnly no\n"))
+        try edit { $0.identitiesOnly = .unset; $0.identityFile = "" }
+        XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8), "Host web\n  HostName web.example\n")
+    }
+
+    func testIdentitiesOnlyImportedWithInheritedKeyStaysEditable() throws {
+        let paths = try fixture()
+        try Data("Host *\n  IdentityFile ~/.ssh/id_shared\nHost web\n  HostName web.example\n  IdentitiesOnly True\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        var input = HostInput(host: host)
+        XCTAssertEqual(input.identitiesOnly, .yes)
+        input.hostName = "changed.example"
+        _ = try writer.commit(writer.plan(.update(hostID: host.id, input: input), from: scan))
+        XCTAssertTrue(try String(contentsOf: paths.root, encoding: .utf8).hasSuffix("  HostName changed.example\n  IdentitiesOnly True\n"),
+                      "an unchanged imported value is preserved byte for byte")
+    }
 }
