@@ -177,4 +177,58 @@ final class CloudConfigSyncTests: XCTestCase {
             ]), "\(pair)")
         }
     }
+
+    func testOwnUndecryptableSlotCanBeExplicitlyReplacedWithLocalBackup() throws {
+        let item = try fixture()
+        let device = UUID()
+        let other = UUID()
+        for id in [device, other] {
+            try item.service.push(item.service.planPush(scan: ConfigReader(rootURL: item.root).scan(),
+                                                        deviceID: id, deviceName: "Old", passphrase: passphrase))
+        }
+        let ownSlot = try XCTUnwrap(try item.service.slots().first { $0.deviceID == device })
+        let otherSlot = try XCTUnwrap(try item.service.slots().first { $0.deviceID == other })
+        let oldBytes = try Data(contentsOf: ownSlot.url)
+        let otherBytes = try Data(contentsOf: otherSlot.url)
+        let newPassphrase = "a brand new shared passphrase"
+
+        XCTAssertThrowsError(try item.service.planPush(scan: ConfigReader(rootURL: item.root).scan(),
+                                                       deviceID: device, deviceName: "New",
+                                                       passphrase: newPassphrase)) { error in
+            guard case CloudPushError.ownSlotUnreadable = error else { return XCTFail("\(error)") }
+        }
+        let plan = try item.service.planPush(scan: ConfigReader(rootURL: item.root).scan(),
+                                             deviceID: device, deviceName: "New",
+                                             passphrase: newPassphrase, replaceUnreadableSlot: true)
+        XCTAssertTrue(plan.replacesUnreadableSlot)
+        XCTAssertThrowsError(try item.service.push(plan), "replacing requires a local backup location")
+        XCTAssertEqual(try Data(contentsOf: ownSlot.url), oldBytes)
+
+        let backups = item.home.appendingPathComponent("backups")
+        let backup = try XCTUnwrap(try item.service.push(plan, replacedSlotBackupDirectory: backups))
+        XCTAssertEqual(try Data(contentsOf: backup), oldBytes)
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: backup.path))[.posixPermissions] as? Int, 0o600)
+        XCTAssertEqual(try item.service.describeSlots(passphrase: newPassphrase)
+            .first { $0.deviceID == device }?.deviceName, "New")
+        XCTAssertEqual(try Data(contentsOf: otherSlot.url), otherBytes, "other devices are never touched")
+
+        let readable = try item.service.planPush(scan: ConfigReader(rootURL: item.root).scan(),
+                                                 deviceID: device, deviceName: "New",
+                                                 passphrase: newPassphrase, replaceUnreadableSlot: true)
+        XCTAssertFalse(readable.replacesUnreadableSlot)
+    }
+
+    func testReplacingUnreadableSlotRefusesRemoteChangedAfterPreview() throws {
+        let item = try fixture()
+        let device = UUID()
+        try item.service.push(item.service.planPush(scan: ConfigReader(rootURL: item.root).scan(),
+                                                    deviceID: device, deviceName: "Old", passphrase: passphrase))
+        let plan = try item.service.planPush(scan: ConfigReader(rootURL: item.root).scan(),
+                                             deviceID: device, deviceName: "New",
+                                             passphrase: "a brand new shared passphrase", replaceUnreadableSlot: true)
+        let slot = try XCTUnwrap(try item.service.slots().first)
+        try Data("changed elsewhere".utf8).write(to: slot.url)
+        XCTAssertThrowsError(try item.service.push(plan, replacedSlotBackupDirectory: item.home.appendingPathComponent("backups")))
+        XCTAssertEqual(try String(contentsOf: slot.url, encoding: .utf8), "changed elsewhere")
+    }
 }
