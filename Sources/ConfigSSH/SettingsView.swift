@@ -22,6 +22,7 @@ struct SettingsView: View {
     @State private var snapshotKeyIndexTask: Task<Void, Never>?
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("globalShortcut") private var globalShortcut = GlobalShortcutChoice.off.rawValue
+    @State private var iCloudDriveAvailable = true
     @State private var launchService = TerminalLaunchService()
     @State private var profiles: [TerminalProfile] = []
     @State private var terminalCapabilities: [String: TerminalCapability] = [:]
@@ -76,8 +77,12 @@ struct SettingsView: View {
                             Spacer()
                             Button("配置") {
                                 editingProfileID = terminal.id
-                                executablePath = terminal.executablePath
-                                argumentsText = terminal.arguments.joined(separator: "\n")
+                                // Only a custom CLI owns these fields; prefilling an automatic
+                                // profile's internal path would turn an unchanged save into a
+                                // custom CLI without {alias} and break launching.
+                                let isCustom = terminal.strategy == .customCLI
+                                executablePath = isCustom ? terminal.executablePath : ""
+                                argumentsText = isCustom ? terminal.arguments.joined(separator: "\n") : ""
                             }
                         }
                     }
@@ -190,10 +195,16 @@ struct SettingsView: View {
                     }
                     Button("选择 iCloud Drive 文件夹…", action: chooseICloudFolder)
                     Button("连接测试、推送与拉取…") { showsCloudSync = true }
+                        .task(id: cloudDriveRoot.path) {
+                            let path = cloudDriveRoot.path
+                            iCloudDriveAvailable = await Task.detached(priority: .utility) {
+                                FileManager.default.fileExists(atPath: path)
+                            }.value
+                        }
                     Label("云端仅写入每台 Mac 独立的加密配置文件；不上传私钥。拉取前会展示差异并备份本机原文件。",
                           systemImage: "lock.shield")
                         .font(.callout)
-                    if !FileManager.default.fileExists(atPath: cloudDriveRoot.path) {
+                    if !iCloudDriveAvailable {
                         Label("未检测到 iCloud Drive，请先在系统设置中启用。", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                     }
@@ -238,6 +249,12 @@ struct SettingsView: View {
                     ForEach(GlobalShortcutChoice.allCases) { choice in
                         Text(choice.title).tag(choice.rawValue)
                     }
+                }
+                if globalShortcut != GlobalShortcutChoice.off.rawValue,
+                   globalShortcut != GlobalShortcutManager.shared.activeRawValue {
+                    Label("所选快捷键当前未生效（可能已被其他应用占用），请选择另一组合。",
+                          systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
                 }
                 if Bundle.main.bundleURL.pathExtension != "app" {
                     Text("登录时启动需要从打包后的 ConfigSSH.app 运行。")

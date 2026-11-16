@@ -53,6 +53,10 @@ final class GlobalShortcutManager {
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private var activeChoice: GlobalShortcutChoice = .off
+
+    /// The shortcut actually registered with the system, which can differ from the saved
+    /// preference when registration failed (for example, another app owns the combination).
+    var activeRawValue: String { activeChoice.rawValue }
     private var panel: NSPanel?
 
     private init() { }
