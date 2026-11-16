@@ -514,4 +514,64 @@ final class ConfigWriterTests: XCTestCase {
         }
         XCTAssertEqual(try writer.backups.list().count, 2, "no backup may be taken through the symlink")
     }
+
+    func testBackupPruneNeverDeletesFilesOutsideBackupDirectory() throws {
+        let paths = try fixture()
+        try Data("# root\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.planRootConfigReplacement(text: "# edited\n",
+                                                               from: ConfigReader(rootURL: paths.root).scan()))
+        let victim = paths.backup.deletingLastPathComponent().appendingPathComponent("victim.txt")
+        try Data("keep me\n".utf8).write(to: victim)
+        let id = UUID()
+        let planted = BackupRecord(id: id, sourcePath: paths.root.path, backupPath: victim.path,
+                                   beforeHash: nil, afterHash: nil, originalMode: nil,
+                                   originalModificationDate: nil, createdAt: Date(timeIntervalSince1970: 0),
+                                   reason: "planted")
+        try JSONEncoder().encode(planted).write(to: paths.backup.appendingPathComponent("\(id.uuidString).json"))
+        try writer.backups.prune(keeping: 1)
+        XCTAssertEqual(try String(contentsOf: victim, encoding: .utf8), "keep me\n")
+        XCTAssertEqual(try writer.backups.list().count, 1)
+    }
+
+    func testRollbackOfDeletedFileRestoresOriginalMode() throws {
+        let paths = try fixture()
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example")),
+                                          from: ConfigReader(rootURL: paths.root).scan()))
+        let file = writer.managedDirectoryURL.appendingPathComponent("demo.conf")
+        XCTAssertEqual(chmod(file.path, 0o644), 0)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let delete = try writer.plan(.delete(hostID: try XCTUnwrap(scan.hosts.first).id), from: scan)
+        XCTAssertNil(delete.changes.first?.after)
+        // A post-write verification failure forces the already-applied deletion to roll back.
+        XCTAssertThrowsError(try writer.commit(ConfigChangePlan(title: "t", targetAlias: "ghost",
+                                                                checkedVersions: delete.checkedVersions,
+                                                                changes: delete.changes)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: file.path))[.posixPermissions] as? Int, 0o644)
+    }
+
+    func testAddedOptionStaysAboveNextBlocksLeadingComment() throws {
+        let paths = try fixture()
+        try Data("Host web\n  HostName web.example\n\n# prod db\nHost db\n  HostName db.example\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        _ = try writer.commit(writer.plan(.update(hostID: host.id, input: HostInput(alias: "web", hostName: "web.example", port: "2222")),
+                                          from: scan))
+        XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8),
+                       "Host web\n  HostName web.example\n  Port 2222\n\n# prod db\nHost db\n  HostName db.example\n")
+    }
+
+    func testTabSeparatedIncludeIsRecognisedAndNotDuplicated() throws {
+        let paths = try fixture()
+        let root = "Include\tconfig.d/*.conf\nInclude\tconfig.d/*/*.conf\n"
+        try Data(root.utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let plan = try writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example")),
+                                   from: ConfigReader(rootURL: paths.root).scan())
+        XCTAssertEqual(plan.changes.count, 1)
+        XCTAssertFalse(plan.changes.contains { $0.url == paths.root })
+    }
 }

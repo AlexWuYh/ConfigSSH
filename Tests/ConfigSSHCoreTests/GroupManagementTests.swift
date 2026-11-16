@@ -267,4 +267,76 @@ final class GroupManagementTests: XCTestCase {
         XCTAssertFalse(writer.groupDirectories().contains("Work"))
         XCTAssertEqual(try service.pendingOperations().count, 0)
     }
+
+    func testResumeRejectsJournalTouchingOtherGroupsOrForeignMetadataKeys() throws {
+        let (writer, root) = try fixture()
+        try writer.createGroup(named: "Work")
+        try writer.createGroup(named: "Other")
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example", group: "Work")),
+                                          from: ConfigReader(rootURL: root).scan()))
+        let store = try MetadataStore(databaseURL: root.deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("metadata.sqlite"))
+        let service = GroupDeletionService(writer: writer, metadataStore: store)
+        let plan = try writer.planGroupDeletion(named: "Work", from: ConfigReader(rootURL: root).scan())
+        let journal = try service.prepare(plan)
+        let url = writer.backups.directoryURL.appendingPathComponent("GroupOperations/\(journal.id.uuidString).json")
+        let pristine = try Data(contentsOf: url)
+        let foreign = writer.managedDirectoryURL.appendingPathComponent("Other/victim.conf").path
+        let tamperings: [(inout [String: Any]) -> Void] = [
+            { json in
+                var changes = json["changes"] as! [[String: Any]]
+                changes.append(["path": foreign, "after": Data("Host x\n".utf8).base64EncodedString()])
+                json["changes"] = changes
+            },
+            { json in json["keyMoves"] = [["from": "tmp/a\u{1F}a", "to": "tmp/b\u{1F}b"]] },
+        ]
+        for tamper in tamperings {
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: pristine) as? [String: Any])
+            tamper(&json)
+            try FileManager.default.removeItem(at: url)
+            try JSONSerialization.data(withJSONObject: json).write(to: url)
+            XCTAssertThrowsError(try service.resume(journal))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: foreign))
+            XCTAssertEqual(try service.pendingOperations().count, 1)
+        }
+    }
+
+    func testRollbackRestoresGroupDirectoryAndFileModes() throws {
+        let (writer, root) = try fixture()
+        try writer.createGroup(named: "Work")
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example", group: "Work")),
+                                          from: ConfigReader(rootURL: root).scan()))
+        let group = writer.managedDirectoryURL.appendingPathComponent("Work")
+        let file = group.appendingPathComponent("demo.conf")
+        XCTAssertEqual(chmod(group.path, 0o755), 0)
+        XCTAssertEqual(chmod(file.path, 0o644), 0)
+        let store = try MetadataStore(databaseURL: root.deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("metadata.sqlite"))
+        let host = try XCTUnwrap(ConfigReader(rootURL: root).scan().hosts.first)
+        try store.save(HostMetadata(hostKey: host.metadataKey, displayName: "原始"))
+        try store.save(HostMetadata(hostKey: "\(writer.managedDirectoryURL.appendingPathComponent("demo.conf").path)\u{1F}demo",
+                                    displayName: "现有"))
+        let service = GroupDeletionService(writer: writer, metadataStore: store)
+        XCTAssertThrowsError(try service.delete(writer.planGroupDeletion(named: "Work", from: ConfigReader(rootURL: root).scan())))
+        func mode(_ url: URL) throws -> Int? {
+            try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        }
+        XCTAssertEqual(try mode(group), 0o755)
+        XCTAssertEqual(try mode(file), 0o644)
+    }
+
+    func testFinderMetadataDoesNotBlockGroupDeletion() throws {
+        let (writer, root) = try fixture()
+        try writer.createGroup(named: "Work")
+        _ = try writer.commit(writer.plan(.add(HostInput(alias: "demo", hostName: "demo.example", group: "Work")),
+                                          from: ConfigReader(rootURL: root).scan()))
+        let group = writer.managedDirectoryURL.appendingPathComponent("Work")
+        try Data([0, 0, 0, 1]).write(to: group.appendingPathComponent(".DS_Store"))
+        let store = try MetadataStore(databaseURL: root.deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("metadata.sqlite"))
+        try GroupDeletionService(writer: writer, metadataStore: store)
+            .delete(writer.planGroupDeletion(named: "Work", from: ConfigReader(rootURL: root).scan()))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: group.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: writer.managedDirectoryURL.appendingPathComponent("demo.conf").path))
+    }
 }

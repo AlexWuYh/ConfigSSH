@@ -158,4 +158,23 @@ final class CloudConfigSyncTests: XCTestCase {
         XCTAssertEqual(plan.skippedSources.count, 1)
         XCTAssertTrue(plan.warnings.contains { $0.contains("跳过") })
     }
+
+    func testCloudPullRejectsCaseOrNormalizationCollidingPaths() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("ConfigSSHPullCase-\(UUID().uuidString)")
+        let ssh = home.appendingPathComponent(".ssh")
+        try FileManager.default.createDirectory(at: ssh, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+        let root = ssh.appendingPathComponent("config")
+        try Data("# local\n".utf8).write(to: root)
+        let writer = ConfigWriter(rootURL: root, backupDirectory: home.appendingPathComponent("backups"))
+        let base = CloudConfigFile(relativePath: "config", content: Data("Include config.d/*.conf\n".utf8))
+        for pair in [("config.d/Web.conf", "config.d/web.conf"),
+                     ("config.d/caf\u{E9}.conf", "config.d/cafe\u{301}.conf")] {
+            XCTAssertThrowsError(try writer.planCloudPull([
+                base,
+                CloudConfigFile(relativePath: pair.0, content: Data("Host a\n".utf8)),
+                CloudConfigFile(relativePath: pair.1, content: Data("Host b\n".utf8)),
+            ]), "\(pair)")
+        }
+    }
 }

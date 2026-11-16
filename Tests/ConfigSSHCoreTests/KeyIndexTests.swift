@@ -176,4 +176,24 @@ final class KeyIndexTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
         XCTAssertFalse(process.isRunning)
     }
+
+    func testDirectoryIdentityFileIsNotReportedAsPrivateKeyAndHugePubIsSkipped() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ConfigSSHKeyEdge-\(UUID().uuidString)")
+        let ssh = directory.appendingPathComponent(".ssh")
+        try FileManager.default.createDirectory(at: ssh.appendingPathComponent("id_dir"), withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        try Data("ssh-ed25519 AQIDBA== dir\n".utf8).write(to: ssh.appendingPathComponent("id_dir.pub"))
+        let huge = ssh.appendingPathComponent("id_huge.pub")
+        FileManager.default.createFile(atPath: huge.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: huge)
+        try handle.truncate(atOffset: 512 * 1_024 * 1_024)
+        try handle.close()
+        let config = ssh.appendingPathComponent("config")
+        try Data("Host demo\n IdentityFile \(ssh.path)/id_dir\n IdentityFile \(ssh.path)/id_huge\n".utf8).write(to: config)
+
+        let result = KeyIndex(sshDirectory: ssh).scan(hosts: ConfigReader(rootURL: config).scan().hosts)
+        let dirKey = try XCTUnwrap(result.keys.first { $0.name == "id_dir" })
+        XCTAssertFalse(dirKey.privateKeyExists)
+        XCTAssertTrue(result.issues.contains { $0.contains("id_huge.pub") })
+    }
 }

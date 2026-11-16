@@ -18,6 +18,8 @@ package struct PendingGroupDeletion: Codable, Identifiable {
     package let id: UUID
     package let name: String
     package let directoryPath: String?
+    /// Permission bits of the group directory before deletion; `nil` in older journals.
+    package var directoryMode: Int? = nil
     package let changes: [FileChange]
     package let keyMoves: [HostKeyMove]
 }
@@ -49,8 +51,11 @@ package struct GroupDeletionService {
                 to: "\(writer.managedDirectoryURL.appendingPathComponent(host.sourceURL.lastPathComponent).path)\u{1F}\(host.alias.lowercased())"
             )
         }
+        let directoryMode = plan.directoryURL.flatMap {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.posixPermissions] as? Int
+        }
         let operation = PendingGroupDeletion(
-            id: UUID(), name: plan.name, directoryPath: plan.directoryURL?.path,
+            id: UUID(), name: plan.name, directoryPath: plan.directoryURL?.path, directoryMode: directoryMode,
             changes: plan.changePlan?.changes.map { change in
                 PendingGroupDeletion.FileChange(path: change.url.path, before: change.before,
                                                 after: change.after,
@@ -120,11 +125,29 @@ package struct GroupDeletionService {
                 throw ConfigEditError.unsafe("分组操作记录中的目录不在受管范围内")
             }
         }
+        // A group deletion only ever touches the root config, files directly inside this
+        // group's directory, and their new ungrouped location directly inside config.d.
+        let managed = writer.managedDirectoryURL.standardizedFileURL.path
+        let group = writer.managedDirectoryURL.appendingPathComponent(operation.name).standardizedFileURL.path
         for change in operation.changes {
-            let path = URL(fileURLWithPath: change.path).standardizedFileURL.path
-            guard path == writer.rootURL.path ||
-                    (path.hasPrefix(writer.managedDirectoryURL.path + "/") && path.hasSuffix(".conf")) else {
-                throw ConfigEditError.unsafe("分组操作记录中的文件不在受管范围内：\(path)")
+            let url = URL(fileURLWithPath: change.path).standardizedFileURL
+            let parent = url.deletingLastPathComponent().path
+            guard url.path == writer.rootURL.path ||
+                    (url.pathExtension == "conf" && (parent == group || parent == managed)) else {
+                throw ConfigEditError.unsafe("分组操作记录中的文件不在受管范围内：\(url.path)")
+            }
+        }
+        for move in operation.keyMoves {
+            let from = move.from.split(separator: "\u{1F}", omittingEmptySubsequences: false)
+            let to = move.to.split(separator: "\u{1F}", omittingEmptySubsequences: false)
+            guard from.count == 2, to.count == 2, from[1] == to[1] else {
+                throw ConfigEditError.unsafe("分组操作记录中的元数据迁移无效")
+            }
+            let source = URL(fileURLWithPath: String(from[0])).standardizedFileURL
+            let target = URL(fileURLWithPath: String(to[0])).standardizedFileURL
+            guard source.pathExtension == "conf", source.deletingLastPathComponent().path == group,
+                  target.path == managed + "/" + source.lastPathComponent else {
+                throw ConfigEditError.unsafe("分组操作记录中的元数据迁移不属于此分组：\(move.from)")
             }
         }
     }
@@ -149,7 +172,12 @@ package struct GroupDeletionService {
 
     private func rollbackFiles(_ operation: PendingGroupDeletion) throws {
         if let directoryPath = operation.directoryPath {
+            try validate(operation)
+            let existed = FileManager.default.fileExists(atPath: directoryPath)
             try SafeFileIO.ensureDirectory(URL(fileURLWithPath: directoryPath))
+            if !existed, let mode = operation.directoryMode {
+                _ = chmod(directoryPath, mode_t(mode & 0o777))
+            }
         }
         let changes = try pendingFileChanges(operation, destination: .before)
         guard !changes.isEmpty else { return }

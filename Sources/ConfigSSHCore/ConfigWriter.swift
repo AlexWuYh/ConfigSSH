@@ -75,7 +75,8 @@ package struct ConfigWriter: Sendable {
                         url: change.url,
                         before: change.after,
                         after: change.before,
-                        expectedVersion: current
+                        expectedVersion: current,
+                        desiredMode: change.expectedVersion.mode
                     ))
                 } catch {
                     rollbackFailed = true
@@ -200,7 +201,8 @@ package struct ConfigWriter: Sendable {
             guard !file.relativePath.hasPrefix("/"), !file.relativePath.contains("\\"),
                   !file.relativePath.contains("\0"),
                   components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-                  seen.insert(file.relativePath).inserted,
+                  // APFS is case-insensitive by default: Web.conf and web.conf are one file.
+                  seen.insert(file.relativePath.lowercased()).inserted,
                   file.content.count <= 16 * 1_024 * 1_024,
                   totalBytes <= 48 * 1_024 * 1_024 - file.content.count else {
                 throw ConfigEditError.unsafe("云端配置包含无效路径、重复文件或超出大小限制")
@@ -650,6 +652,7 @@ package struct ConfigWriter: Sendable {
         var rootAfter = root.data
 
         for file in files.sorted(by: { $0.path < $1.path }) {
+            if file.lastPathComponent == ".DS_Store" { continue }
             guard file.pathExtension.lowercased() == "conf",
                   let host = scan.hosts.first(where: { $0.sourceURL.standardizedFileURL == file.standardizedFileURL }),
                   scan.hosts.filter({ $0.sourceURL.standardizedFileURL == file.standardizedFileURL }).count == 1,
@@ -693,6 +696,12 @@ package struct ConfigWriter: Sendable {
         guard let directory = plan.directoryURL else { return }
         guard directory.deletingLastPathComponent().standardizedFileURL.path == managedDirectoryURL.path else {
             throw ConfigEditError.unsafe("分组目录不在受管范围内")
+        }
+        // Finder metadata is the only non-host file a group may hold; drop it so rmdir works.
+        let finderMetadata = directory.appendingPathComponent(".DS_Store").path
+        var info = stat()
+        if lstat(finderMetadata, &info) == 0, info.st_mode & S_IFMT == S_IFREG {
+            _ = unlink(finderMetadata)
         }
         guard directory.path.withCString({ rmdir($0) }) == 0 else {
             throw ConfigEditError.io("主机可能已移动，但分组目录未能删除；请重新载入后检查：\(directory.path)")
@@ -759,13 +768,13 @@ package struct ConfigWriter: Sendable {
             let line = String(decoding: bytes[lineStart..<lineEnd], as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let lower = line.lowercased()
-            if lower.hasPrefix("host ") || lower.hasPrefix("match ") {
+            if startsWithKeyword(lower, "host") || startsWithKeyword(lower, "match") {
                 if !encounteredHostRule {
                     insertion = lineStart
                     encounteredHostRule = true
                 }
             }
-            if lower.hasPrefix("include ") || lower.hasPrefix("include=") {
+            if startsWithKeyword(lower, "include") {
                 let value = String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces)
                     .trimmingCharacters(in: CharacterSet(charactersIn: "="))
                     .trimmingCharacters(in: .whitespaces)
@@ -811,6 +820,13 @@ package struct ConfigWriter: Sendable {
         let separator = insertion > 0 && data[insertion - 1] != 10 ? newline : ""
         result.replaceSubrange(insertion..<insertion, with: Data((separator + missing.joined(separator: newline) + newline).utf8))
         return result
+    }
+
+    /// OpenSSH separates a keyword from its value with whitespace (space or tab) or `=`.
+    private func startsWithKeyword(_ lowercasedLine: String, _ keyword: String) -> Bool {
+        guard lowercasedLine.hasPrefix(keyword),
+              let next = lowercasedLine.dropFirst(keyword.count).first else { return false }
+        return next == " " || next == "\t" || next == "="
     }
 
     private func validate(_ input: HostInput, requireHostName: Bool) throws {
@@ -897,10 +913,17 @@ package struct ConfigWriter: Sendable {
             edits.append((line.range, try rewrite(line: line.text, keyword: name, value: value)))
         }
         if !additions.isEmpty {
+            // Insert right after the block's last option line, not at the end of its byte range:
+            // the range also holds trailing blank lines and the next block's leading comments.
             let newline = lineEnding(in: data)
-            let existing = data.subdata(in: host.byteRange)
-            let prefix = existing.isEmpty || existing.suffix(newline.utf8.count).elementsEqual(newline.utf8) ? "" : newline
-            edits.append((host.byteRange.upperBound..<host.byteRange.upperBound,
+            let lastNumber = max(host.sourceLine, host.explicitOptions.map(\.line).max() ?? host.sourceLine)
+            guard let lastLine = lines.first(where: { $0.number == lastNumber }),
+                  lastLine.range.lowerBound >= host.byteRange.lowerBound,
+                  lastLine.range.upperBound <= host.byteRange.upperBound else {
+                throw ConfigEditError.conflict("无法定位 Host 的最后一行，请重新载入")
+            }
+            let prefix = lastLine.text.hasSuffix("\n") ? "" : newline
+            edits.append((lastLine.range.upperBound..<lastLine.range.upperBound,
                           Data((prefix + additions.joined(separator: newline) + newline).utf8)))
         }
         var result = data
