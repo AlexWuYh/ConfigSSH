@@ -150,3 +150,4 @@
 - 使用不含本地 `.ai/` 的独立根提交建立公开仓库 `AlexWuYh/ConfigSSH`；公开 Git 历史没有 `.ai/`，原本包含该目录的旧历史仅保存在本机忽略目录中的私有 bundle。项目目录本地 `main` 已与公开提交对齐，`.ai/` 仍在本机且不受 Git 跟踪。
 - GitHub 仓库简介与 `macos`、`swiftui`、`ssh`、`openssh`、`ssh-config`、`local-first` 标签已设置。`main`/PR 流水线使用 Xcode 27 runner 执行测试和未签名打包；推送 `vMAJOR.MINOR.PATCH` tag 时，发布流水线校验专业 Release Notes、运行测试、打包 ZIP 和 SHA-256，创建未签名 Pre-release。两条流水线均检查可达历史中不得含 `.ai/`。
 - 发布规范、Release Notes 模板及 `v0.1.0` 文案已提交；尚未创建 tag 或 Release，真实 tag 触发与 GitHub Release 资产上传仍待首次发布时验证。没有 Developer ID 证书或公证凭据，因此不能把自动产物称为正式公开下载包。
+- 首次远端 `main` 流水线（Actions run `43807291898`）已通过：公开历史检查、测试及未签名 `.app` 打包均成功；本机 `swift test` 95 项、Release 构建、Release Notes 校验及 actionlint 也已通过。Release tag 路径尚未触发，不据此宣称 Release 资产上传已验收。
