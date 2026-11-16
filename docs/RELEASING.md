@@ -7,6 +7,7 @@
 - 仅使用 `vMAJOR.MINOR.PATCH` 格式，例如 `v0.1.0`。Tag 必须指向 `main` 上已提交、已测试的版本。
 - 将正式文案写入 `.github/release-notes/<tag>.md`，例如 `.github/release-notes/v0.1.0.md`。先运行 `python3 scripts/validate-release-notes.py v0.1.0`。
 - 推送 tag 后，`.github/workflows/release.yml` 在 macOS arm64 runner 上运行测试、构建 `.app`、打包 ZIP、生成 SHA-256 校验文件，并上传到对应 GitHub Release。
+- `main` 分支和 Pull Request 另由 `.github/workflows/ci.yml` 在 Xcode 27 runner 上验证测试和未签名打包；它不创建 Release。发布 workflow 同样使用 Xcode 27 runner，避免本机与 CI 的主要工具链版本不一致。
 - 当前没有 Developer ID 证书与公证凭据。流水线**只创建未签名 prerelease**，资产名称包含 `unsigned`；不能将其描述为已通过 Gatekeeper 的正式下载版。取得签名/公证条件后，先扩充并验收流水线，再调整发布级别与文案。
 - 不要把 `.ai/`、真实 `~/.ssh`、私钥、个人服务器地址或测试夹具上传到仓库或 Release 资产。
 

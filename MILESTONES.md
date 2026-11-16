@@ -144,3 +144,9 @@
 - iCloud 加密口令增加明确的“保存/更新/移除本机钥匙串”操作，已保存时打开面板自动填入；不需要先推送成功。设备列表在空状态也有清晰提示与“预览拉取到本机”按钮；有设备时列出独立 ID，并在输入正确口令后异步解锁设备名称。推送跳过 `~/.ssh` 外或非受管 Include 时会列出路径、提示云端可能不完整，并要求额外确认；主 config 仍是必需文件。截图所示外部 Include 不再直接阻断预览。
 - 临时夹具测试与真实界面截图均不读取真实 `~/.ssh`、不执行 SSH 连接，也不使用真实 iCloud Drive。设备列表、钥匙串与双击的完整 UI 自动化及真实多 Mac 云同步仍待现场验收；发布签名/公证继续暂缓。
 - 本轮最终验证：`swift test` 95 项通过，`swift build -c release`、脚本语法与 `git diff --check` 通过；用正式 Bundle ID 生成未签名本机预览包 `dist/ConfigSSH-Preview-20261116-Feedback.app`，检查新图标、资源 bundle 和 MIT LICENSE，并已启动进程。未对真实主机或 iCloud 执行推送/拉取。
+
+## 2026 年 11 月 16 日公开仓库与发布自动化
+
+- 使用不含本地 `.ai/` 的独立根提交建立公开仓库 `AlexWuYh/ConfigSSH`；公开 Git 历史没有 `.ai/`，原本包含该目录的旧历史仅保存在本机忽略目录中的私有 bundle。项目目录本地 `main` 已与公开提交对齐，`.ai/` 仍在本机且不受 Git 跟踪。
+- GitHub 仓库简介与 `macos`、`swiftui`、`ssh`、`openssh`、`ssh-config`、`local-first` 标签已设置。`main`/PR 流水线使用 Xcode 27 runner 执行测试和未签名打包；推送 `vMAJOR.MINOR.PATCH` tag 时，发布流水线校验专业 Release Notes、运行测试、打包 ZIP 和 SHA-256，创建未签名 Pre-release。两条流水线均检查可达历史中不得含 `.ai/`。
+- 发布规范、Release Notes 模板及 `v0.1.0` 文案已提交；尚未创建 tag 或 Release，真实 tag 触发与 GitHub Release 资产上传仍待首次发布时验证。没有 Developer ID 证书或公证凭据，因此不能把自动产物称为正式公开下载包。

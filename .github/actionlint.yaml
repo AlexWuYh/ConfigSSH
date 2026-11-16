@@ -1,0 +1,6 @@
+# GitHub's Xcode 27 preview runner is newer than actionlint's built-in label list.
+# Keep all other workflow checks enabled.
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      - 'label "xcode-27" is unknown'

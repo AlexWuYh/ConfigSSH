@@ -1,0 +1,57 @@
+name: Validate macOS build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and package unsigned app
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify public history
+        run: |
+          set -euo pipefail
+          if git rev-list --objects HEAD | grep -E '^[0-9a-f]+ \.ai(/|$)' >/dev/null; then
+            echo 'The .ai/ directory must not be present in the public history.' >&2
+            exit 1
+          fi
+
+      - name: Show build toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Run tests
+        run: |
+          python3 -m unittest discover -s scripts/tests
+          swift test
+
+      - name: Build unsigned macOS app
+        env:
+          CONFIGSSH_APP_OUTPUT: ${{ runner.temp }}/ConfigSSH.app
+          CONFIGSSH_SIGNING_IDENTITY: ''
+        run: |
+          set -euo pipefail
+          ./scripts/package-macos.sh
+          test -x "$CONFIGSSH_APP_OUTPUT/Contents/MacOS/ConfigSSH"
+          test -f "$CONFIGSSH_APP_OUTPUT/Contents/Resources/ConfigSSH.icns"
+          test -f "$CONFIGSSH_APP_OUTPUT/Contents/Resources/LICENSE.txt"
+          test -d "$CONFIGSSH_APP_OUTPUT/Contents/Resources/ConfigSSH_ConfigSSH.bundle"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$CONFIGSSH_APP_OUTPUT/Contents/Info.plist")" = 'cn.wuewa.configssh'
+          test "$(lipo -archs "$CONFIGSSH_APP_OUTPUT/Contents/MacOS/ConfigSSH")" = 'arm64'
