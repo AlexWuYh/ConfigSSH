@@ -12,6 +12,7 @@ let package = Package(
         .executableTarget(name: "ConfigSSH", dependencies: ["ConfigSSHCore"],
                           resources: [.process("Resources")],
                           linkerSettings: [.linkedFramework("Carbon")]),
+        .executableTarget(name: "configssh-askpass", dependencies: ["ConfigSSHCore"]),
         .testTarget(name: "ConfigSSHCoreTests", dependencies: ["ConfigSSHCore"])
     ]
 )

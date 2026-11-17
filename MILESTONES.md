@@ -194,3 +194,32 @@
 - 详情页显示复用状态；“其他方式”菜单在已配置复用时提供“断开复用连接”，仅在点击时以参数数组运行 `/usr/bin/ssh -o BatchMode=yes -O exit -- <alias>`，不在刷新或后台运行。
 - 顺带修复：CRLF 文件中给 Host 新增字段时，因 Swift 把 `\r\n` 视为单个字符，误插入一行空行。新增回归测试（修复前失败、修复后通过）。
 - 验证：`swift test` **131 项通过**（新增 13 项：时间格式解析、新增/开关/调时长/关闭的字节级结果、等价写法保留、5 种自定义值只读、范围拒绝、目录权限与符号链接拒绝、`ssh -G` 对独立临时文件的解析、`-O exit` 参数与未运行状态、CRLF 回归）；`swift build -c release`、`git diff --check` 通过。用 `/tmp` 脱敏夹具启动 Debug 应用，实窗核对详情页状态、受管主机的开关/时长控件与自定义主机的只读提示。新增 Debug 专用 `CONFIGSSH_PREVIEW_EDIT_HOST` 用于打开编辑表单截图。未实测：真实服务器上的复用与断开，以及表单中开关的实际点击交互（合成点击事件被系统忽略）。
+
+## 部署公钥向导（W 里程碑）
+
+目标：用户输入一次服务器密码，把本机已有或新生成的公钥安装到服务器，验证纯密钥登录成功后，再把 `IdentityFile` 与 `IdentitiesOnly yes` 写入该主机配置。ConfigSSH 不读取、不保存任何密码或私钥内容。
+
+**统一约束（每一轮都适用）**
+
+- 向导里的每一次 ssh 调用（`ssh-copy-id` 部署与纯密钥验证）都强制加上 `-o ControlMaster=no -o ControlPath=none`：既不复用、也不创建复用连接，与终端里的连接隔离，验证结果才可信。
+- `SSH_ASKPASS`、`SSH_ASKPASS_REQUIRE=force` 只设置在该子进程的 `environment` 中；不调用 `setenv()`、不使用 `launchctl setenv`、不改 shell 配置；打开终端连接时剔除 `SSH_ASKPASS*`。
+- 所有外部程序以参数数组运行、不经过 shell，别名放在 `--` 之后并通过 `isSafeAlias`；只在用户点击后运行，不在刷新或后台运行。
+- 不自动回答任何提示，包括首次主机指纹确认；指纹变化立即停止。
+- 测试只用临时目录夹具与本机 `127.0.0.1` 上的非特权测试 `sshd`（已确认 `/usr/sbin/sshd` 可在用户权限、自带 HostKey 下监听本地端口），不连接真实服务器，不使用真实 `~/.ssh`。
+
+| 轮次 | 交付 | 验收测试 |
+|---|---|---|
+| W1 提示辅助程序 | 新 SwiftPM 可执行目标 `configssh-askpass`：读 argv 中的提示文字，按类型显示原生对话框（密码/口令→安全输入框；yes/no 指纹确认→“确认/拒绝”，默认拒绝；其他→普通输入框），只把用户输入写到 stdout；取消返回非零。打包脚本把它放入 `Contents/Helpers/` 并纳入签名。 | 单元测试覆盖提示分类（含伪造的诱导文字）；以无界面测试模式验证 stdout 只含用户输入、取消退出码非零、不写任何文件；打包后核对 `.app` 内辅助程序存在且可执行。 |
+| W2 部署运行器 | 核心层 `KeyDeploymentRunner`：校验所选密钥（`.pub` 与私钥均存在、仅读 `.pub`）→ 以参数数组运行 `/usr/bin/ssh-copy-id -i <pub> [-s] -o ControlMaster=no -o ControlPath=none -- <alias>`，子进程环境注入 askpass；总超时、可取消；输出筛选后返回结构化结果（已安装/已存在/认证失败/指纹变化/网络错误）。 | 用测试 `sshd`（密码认证由测试替身 askpass 提供，或 `authorized_keys` 预置的场景）验证：首次安装、重复安装识别为“已存在”、取消/超时会终止子进程、指纹变化被识别并停止；用假 `ssh-copy-id` 记录参数，断言包含 `ControlMaster=no`、`ControlPath=none`、`--`，环境只在子进程中出现。 |
+| W3 纯密钥验证 | `KeyLoginVerifier`：运行 `ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ControlMaster=no -o ControlPath=none -i <私钥> -- <alias> true`，失败时给出常见原因。 | 测试 `sshd`：公钥已安装时成功；未安装时失败且不弹密码；存在活动 ControlMaster 时仍真实认证（证明不复用）；参数断言同 W2。 |
+| W4 配置写入 | 复用 `ConfigWriter`：只在 W3 成功后生成计划，写入 `IdentityFile` 与 `IdentitiesOnly yes`（已有 `IdentityFile` 时可选“替换/追加”）；复杂或只读主机只显示可复制片段，不写入。 | 临时夹具：字节级差异、备份、版本冲突、只读主机拒绝写入；未验证成功时不可生成计划。 |
+| W5 向导界面 | 三个入口（主机详情、密钥页、无 IdentityFile 时的提示）；五步向导：选密钥/生成 → 确认目标与风险 → 部署（进度、取消）→ 验证 → 差异预览写入；完成页提示服务器端密码登录需自行关闭。 | 用 `/tmp` 脱敏夹具与测试 `sshd` 跑完整流程的真实窗口截图；Debug 预览入口直达各步骤；全量 `swift test`、Release 构建、打包检查。 |
+
+每一轮单独提交并在本文件记录实现与验收结果；W1–W5 全部完成后才合并 PR。
+
+### W1 提示辅助程序：已完成（2026 年 11 月 17 日）
+
+- 新增 SwiftPM 可执行目标 `configssh-askpass`，核心逻辑在 `ConfigSSHCore/Askpass.swift`：按提示分类为密码/口令等输入（安全输入框）、首次主机指纹确认（默认按钮为“拒绝”，并提示先核对指纹）、`SSH_ASKPASS_PROMPT=confirm` 确认与 `none` 通知。提示文字去除控制字符并限制长度；回答中的换行被移除，无法注入第二个回答；取消、拒绝或回答类型不符时不输出内容并以非零退出。对话框使用 App 图标。
+- `AskpassHelperLocator` 只接受 `Contents/Helpers/`（打包后）或可执行文件同目录（SwiftPM 构建）中的普通可执行文件，拒绝符号链接。
+- 打包脚本把辅助程序复制到 `Contents/Helpers/` 并设为 755；有签名身份时先签辅助程序再签 App。CI 与发布流水线增加辅助程序存在且可执行的检查。
+- 验收：新增 7 项测试（提示分类、清洗与截断、只输出一次、取消/拒绝/类型不符不回答、指纹仅在明确批准时回答 `yes`、定位器拒绝符号链接、构建产物存在）；`swift test` **138 项通过**，`shellcheck` 无告警。用打包后的 `.app` 实际运行辅助程序，截图核对密码框与指纹确认对话框；进程被结束时 stdout 为空。未实测：在对话框中实际输入并提交（合成键盘事件不可用），该路径由响应逻辑的单元测试覆盖，并将在 W2 用测试 `sshd` 端到端验证。
