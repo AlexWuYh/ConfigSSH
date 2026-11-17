@@ -111,6 +111,14 @@ package enum ConnectionReuse: Equatable, Sendable {
     }
 }
 
+/// How the wizard records a verified key on a host that already has `IdentityFile` lines.
+package enum IdentityFileUpdateMode: Sendable {
+    /// Replace the single existing `IdentityFile` (or add one if there is none).
+    case replace
+    /// Keep existing `IdentityFile` lines and add this one after them.
+    case append
+}
+
 package struct HostInput: Equatable {
     package var alias: String
     package var hostName: String

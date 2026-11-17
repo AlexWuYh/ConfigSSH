@@ -23,6 +23,20 @@ package struct DeployableKey: Sendable {
     }
 }
 
+/// Proof that `alias` accepted exactly this key. Only `KeyDeployment.verify` creates it (the
+/// initializer is internal to this module), so the UI cannot write key settings unverified.
+package struct VerifiedKeyLogin: Sendable, Equatable {
+    package let alias: String
+    package let privateKeyURL: URL
+    package let fingerprint: String
+
+    init(alias: String, privateKeyURL: URL, fingerprint: String) {
+        self.alias = alias
+        self.privateKeyURL = privateKeyURL
+        self.fingerprint = fingerprint
+    }
+}
+
 package struct KeyDeploymentOptions: Sendable {
     package var askpassURL: URL
     package var sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -119,6 +133,20 @@ package enum KeyDeployment {
             return .failed(error.localizedDescription)
         }
         return interpretLogin(result, expectedFingerprint: key.fingerprint)
+    }
+
+    /// Runs the key-only check and, on success, returns the proof `ConfigWriter.planKeyLogin`
+    /// requires before it will write `IdentityFile`/`IdentitiesOnly`.
+    package static func verify(alias: String, key: DeployableKey, options: KeyDeploymentOptions,
+                               process: GroupProcess = GroupProcess()) -> (outcome: KeyLoginOutcome, proof: VerifiedKeyLogin?) {
+        let outcome = verifyLogin(alias: alias, key: key, options: options, process: process)
+        guard outcome == .verified else { return (outcome, nil) }
+        return (outcome, VerifiedKeyLogin(alias: alias, privateKeyURL: key.privateKeyURL, fingerprint: key.fingerprint))
+    }
+
+    /// The lines to add by hand when the host cannot be edited safely (complex or read-only).
+    package static func configSnippet(alias: String, identityFile: String) -> String {
+        "Host \(alias)\n  IdentityFile \(ConfigWriter.displayPath(identityFile))\n  IdentitiesOnly yes\n"
     }
 
     /// Checks whether the key already works, then installs it with `ssh-copy-id -f`.

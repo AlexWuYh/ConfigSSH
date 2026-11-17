@@ -1069,3 +1069,116 @@ package struct ConfigWriter: Sendable {
         return lines
     }
 }
+
+extension ConfigWriter {
+    /// Shows a path under the user's home as `~/...`, the form OpenSSH configs usually use.
+    package static func displayPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
+    /// Plans `IdentityFile <key>` and `IdentitiesOnly yes` for a host after the key-only login
+    /// check succeeded. Only bytes of those two keywords change; complex or read-only hosts
+    /// throw so the caller shows `KeyDeployment.configSnippet` instead.
+    package func planKeyLogin(_ proof: VerifiedKeyLogin, hostID: String, mode: IdentityFileUpdateMode,
+                              from scan: ConfigScan) throws -> ConfigChangePlan {
+        guard scan.rootURL.standardizedFileURL == rootURL else {
+            throw ConfigEditError.invalid("配置快照与当前项目路径不一致，请重新载入")
+        }
+        let host = try editableHost(hostID, in: scan)
+        guard host.alias == proof.alias else {
+            throw ConfigEditError.invalid("验证结果属于主机 \(proof.alias)，不能写入 \(host.alias)")
+        }
+        let root = try SafeFileIO.snapshot(at: rootURL)
+        guard root.version.sha256 == scan.sources.first(where: { $0.url == rootURL })?.sha256 else {
+            throw ConfigEditError.conflict("主配置自上次载入后已变化，请重新载入")
+        }
+        try checkSSHDirectory()
+        let current = try SafeFileIO.snapshot(at: host.sourceURL)
+        guard current.version.sha256 == scan.sources.first(where: { $0.url == host.sourceURL })?.sha256 else {
+            throw ConfigEditError.conflict("主机源文件已变化，请重新载入")
+        }
+        let data = current.data ?? Data()
+        guard host.byteRange.upperBound <= data.count else {
+            throw ConfigEditError.conflict("Host 字节范围已变化，请重新载入")
+        }
+        let path = Self.displayPath(proof.privateKeyURL.path)
+        guard !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              !path.contains("#"), !path.contains("\""), !path.contains("\\") else {
+            throw ConfigEditError.invalid("私钥路径包含不支持的字符")
+        }
+        let lines = byteLines(in: data)
+        func line(for option: ConfigOption) throws -> (number: Int, range: Range<Int>, text: String) {
+            guard let line = lines.first(where: { $0.number == option.line }),
+                  line.range.lowerBound >= host.byteRange.lowerBound,
+                  line.range.upperBound <= host.byteRange.upperBound else {
+                throw ConfigEditError.conflict("无法定位 \(option.keyword) 的原始行")
+            }
+            return line
+        }
+        var edits: [(range: Range<Int>, replacement: Data)] = []
+        var additions: [String] = []
+
+        let identityFiles = host.explicitOptions.filter { $0.keyword.caseInsensitiveCompare("IdentityFile") == .orderedSame }
+        let expanded = { (value: String) -> String in
+            value.hasPrefix("~/") ? FileManager.default.homeDirectoryForCurrentUser.path + value.dropFirst(1) : value
+        }
+        let alreadyListed = identityFiles.contains { expanded($0.arguments.first ?? "") == proof.privateKeyURL.path }
+        switch mode {
+        case .replace:
+            if identityFiles.count > 1 {
+                throw ConfigEditError.unsafe("此主机有多行 IdentityFile，无法确定替换哪一行；请选择“追加”")
+            }
+            if let existing = identityFiles.first {
+                if !alreadyListed {
+                    edits.append((try line(for: existing).range,
+                                  try rewrite(line: try line(for: existing).text, keyword: "IdentityFile", value: encodePath(path))))
+                }
+            } else {
+                additions.append("  IdentityFile \(encodePath(path))")
+            }
+        case .append:
+            if !alreadyListed { additions.append("  IdentityFile \(encodePath(path))") }
+        }
+
+        let identitiesOnly = host.explicitOptions.filter { $0.keyword.caseInsensitiveCompare("IdentitiesOnly") == .orderedSame }
+        guard identitiesOnly.count <= 1 else {
+            throw ConfigEditError.unsafe("Host 块内有重复的 IdentitiesOnly，无法安全编辑")
+        }
+        if let existing = identitiesOnly.first {
+            guard let choice = IdentitiesOnlyChoice(configValue: existing.arguments.joined(separator: " ")) else {
+                throw ConfigEditError.unsafe("IdentitiesOnly 的原值无法识别，请在源文件中编辑")
+            }
+            if choice != .yes {
+                edits.append((try line(for: existing).range,
+                              try rewrite(line: try line(for: existing).text, keyword: "IdentitiesOnly", value: "yes")))
+            }
+        } else {
+            additions.append("  IdentitiesOnly yes")
+        }
+
+        if !additions.isEmpty {
+            let newline = lineEnding(in: data)
+            let lastNumber = max(host.sourceLine, host.explicitOptions.map(\.line).max() ?? host.sourceLine)
+            guard let lastLine = lines.first(where: { $0.number == lastNumber }),
+                  lastLine.range.lowerBound >= host.byteRange.lowerBound,
+                  lastLine.range.upperBound <= host.byteRange.upperBound else {
+                throw ConfigEditError.conflict("无法定位 Host 的最后一行，请重新载入")
+            }
+            let endsWithNewline = lastLine.text.hasSuffix("\n") || lastLine.text.hasSuffix("\r\n")
+            edits.append((lastLine.range.upperBound..<lastLine.range.upperBound,
+                          Data(((endsWithNewline ? "" : newline) + additions.joined(separator: newline) + newline).utf8)))
+        }
+        guard !edits.isEmpty else { throw ConfigEditError.invalid("此主机已配置这把密钥，无需修改") }
+        var after = data
+        for edit in edits.sorted(by: { $0.range.lowerBound > $1.range.lowerBound }) {
+            after.replaceSubrange(edit.range, with: edit.replacement)
+        }
+        var plan = ConfigChangePlan(title: "为 \(host.alias) 配置密钥登录", targetAlias: host.alias,
+                                    checkedVersions: [root.version, current.version],
+                                    changes: [PlannedFileChange(url: host.sourceURL, before: current.data,
+                                                                after: after, expectedVersion: current.version)])
+        plan.warnings = ["只修改此 Host 块中的 IdentityFile 与 IdentitiesOnly；服务器端的密码登录不会被关闭。"]
+        return plan
+    }
+}
