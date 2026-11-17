@@ -146,33 +146,43 @@ package struct KeyIndex {
 
     private func parsePublicKey(at url: URL, issues: inout [String]) -> (type: String, fingerprint: String, text: String)? {
         do {
-            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey])
-            guard values.isSymbolicLink != true, values.isRegularFile == true else {
-                issues.append("跳过非普通公钥文件：\(url.path)")
-                return nil
-            }
-            guard (values.fileSize ?? .max) <= 64 * 1024 else {
-                issues.append("公钥文件为空、过大或编码无效：\(url.path)")
-                return nil
-            }
-            let data = try Data(contentsOf: url)
-            guard data.count <= 64 * 1024,
-                  let content = String(data: data, encoding: .utf8),
-                  let firstLine = content.split(whereSeparator: \.isNewline).first else {
-                issues.append("公钥文件为空、过大或编码无效：\(url.path)")
-                return nil
-            }
-            let parts = firstLine.split(whereSeparator: \.isWhitespace)
-            guard parts.count >= 2, let blob = Data(base64Encoded: String(parts[1])) else {
-                issues.append("无法解析公钥：\(url.path)")
-                return nil
-            }
-            let digest = Data(SHA256.hash(data: blob)).base64EncodedString().replacingOccurrences(of: "=", with: "")
-            return (String(parts[0]), "SHA256:\(digest)", String(firstLine))
+            return try Self.readPublicKey(at: url)
         } catch {
-            issues.append("无法读取公钥 \(url.path)：\(error.localizedDescription)")
+            issues.append(error.localizedDescription)
             return nil
         }
+    }
+
+    /// Reads one `.pub` file (regular file, at most 64 KiB, never a symlink) and returns its type,
+    /// OpenSSH-style SHA256 fingerprint and first line. Private keys are never opened.
+    package static func readPublicKey(at url: URL) throws -> (type: String, fingerprint: String, text: String) {
+        let values: URLResourceValues
+        do {
+            values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey])
+        } catch {
+            throw ConfigEditError.io("无法读取公钥 \(url.path)：\(error.localizedDescription)")
+        }
+        guard values.isSymbolicLink != true, values.isRegularFile == true else {
+            throw ConfigEditError.unsafe("跳过非普通公钥文件：\(url.path)")
+        }
+        guard (values.fileSize ?? .max) <= 64 * 1024 else {
+            throw ConfigEditError.invalid("公钥文件为空、过大或编码无效：\(url.path)")
+        }
+        let data: Data
+        do { data = try Data(contentsOf: url) } catch {
+            throw ConfigEditError.io("无法读取公钥 \(url.path)：\(error.localizedDescription)")
+        }
+        guard data.count <= 64 * 1024,
+              let content = String(data: data, encoding: .utf8),
+              let firstLine = content.split(whereSeparator: \.isNewline).first else {
+            throw ConfigEditError.invalid("公钥文件为空、过大或编码无效：\(url.path)")
+        }
+        let parts = firstLine.split(whereSeparator: \.isWhitespace)
+        guard parts.count >= 2, let blob = Data(base64Encoded: String(parts[1])) else {
+            throw ConfigEditError.invalid("无法解析公钥：\(url.path)")
+        }
+        let digest = Data(SHA256.hash(data: blob)).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        return (String(parts[0]), "SHA256:\(digest)", String(firstLine))
     }
 }
 

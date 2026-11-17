@@ -210,7 +210,7 @@
 | 轮次 | 交付 | 验收测试 |
 |---|---|---|
 | W1 提示辅助程序 | 新 SwiftPM 可执行目标 `configssh-askpass`：读 argv 中的提示文字，按类型显示原生对话框（密码/口令→安全输入框；yes/no 指纹确认→“确认/拒绝”，默认拒绝；其他→普通输入框），只把用户输入写到 stdout；取消返回非零。打包脚本把它放入 `Contents/Helpers/` 并纳入签名。 | 单元测试覆盖提示分类（含伪造的诱导文字）；以无界面测试模式验证 stdout 只含用户输入、取消退出码非零、不写任何文件；打包后核对 `.app` 内辅助程序存在且可执行。 |
-| W2 部署运行器 | 核心层 `KeyDeploymentRunner`：校验所选密钥（`.pub` 与私钥均存在、仅读 `.pub`）→ 以参数数组运行 `/usr/bin/ssh-copy-id -i <pub> [-s] -o ControlMaster=no -o ControlPath=none -- <alias>`，子进程环境注入 askpass；总超时、可取消；输出筛选后返回结构化结果（已安装/已存在/认证失败/指纹变化/网络错误）。 | 用测试 `sshd`（密码认证由测试替身 askpass 提供，或 `authorized_keys` 预置的场景）验证：首次安装、重复安装识别为“已存在”、取消/超时会终止子进程、指纹变化被识别并停止；用假 `ssh-copy-id` 记录参数，断言包含 `ControlMaster=no`、`ControlPath=none`、`--`，环境只在子进程中出现。 |
+| W2 部署运行器 | 核心层 `KeyDeploymentRunner`：校验所选密钥（`.pub` 与私钥均存在、仅读 `.pub`）→ 以参数数组运行 `/usr/bin/ssh-copy-id -i <pub> -o ControlMaster=no -o ControlPath=none -- <alias>`，子进程环境注入 askpass；总超时、可取消；输出筛选后返回结构化结果（已安装/已存在/认证失败/指纹变化/网络错误）。 | 用测试 `sshd`（密码认证由测试替身 askpass 提供，或 `authorized_keys` 预置的场景）验证：首次安装、重复安装识别为“已存在”、取消/超时会终止子进程、指纹变化被识别并停止；用假 `ssh-copy-id` 记录参数，断言包含 `ControlMaster=no`、`ControlPath=none`、`--`，环境只在子进程中出现。 |
 | W3 纯密钥验证 | `KeyLoginVerifier`：运行 `ssh -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ControlMaster=no -o ControlPath=none -i <私钥> -- <alias> true`，失败时给出常见原因。 | 测试 `sshd`：公钥已安装时成功；未安装时失败且不弹密码；存在活动 ControlMaster 时仍真实认证（证明不复用）；参数断言同 W2。 |
 | W4 配置写入 | 复用 `ConfigWriter`：只在 W3 成功后生成计划，写入 `IdentityFile` 与 `IdentitiesOnly yes`（已有 `IdentityFile` 时可选“替换/追加”）；复杂或只读主机只显示可复制片段，不写入。 | 临时夹具：字节级差异、备份、版本冲突、只读主机拒绝写入；未验证成功时不可生成计划。 |
 | W5 向导界面 | 三个入口（主机详情、密钥页、无 IdentityFile 时的提示）；五步向导：选密钥/生成 → 确认目标与风险 → 部署（进度、取消）→ 验证 → 差异预览写入；完成页提示服务器端密码登录需自行关闭。 | 用 `/tmp` 脱敏夹具与测试 `sshd` 跑完整流程的真实窗口截图；Debug 预览入口直达各步骤；全量 `swift test`、Release 构建、打包检查。 |
@@ -223,3 +223,14 @@
 - `AskpassHelperLocator` 只接受 `Contents/Helpers/`（打包后）或可执行文件同目录（SwiftPM 构建）中的普通可执行文件，拒绝符号链接。
 - 打包脚本把辅助程序复制到 `Contents/Helpers/` 并设为 755；有签名身份时先签辅助程序再签 App。CI 与发布流水线增加辅助程序存在且可执行的检查。
 - 验收：新增 7 项测试（提示分类、清洗与截断、只输出一次、取消/拒绝/类型不符不回答、指纹仅在明确批准时回答 `yes`、定位器拒绝符号链接、构建产物存在）；`swift test` **138 项通过**，`shellcheck` 无告警。用打包后的 `.app` 实际运行辅助程序，截图核对密码框与指纹确认对话框；进程被结束时 stdout 为空。未实测：在对话框中实际输入并提交（合成键盘事件不可用），该路径由响应逻辑的单元测试覆盖，并将在 W2 用测试 `sshd` 端到端验证。
+
+### W2 部署运行器：已完成（2026 年 11 月 17 日）
+
+- `KeyDeployment.deploy` 先用纯密钥方式试登（见 W3 的验证逻辑），新密钥已可登录则返回“已存在”；否则以参数数组运行 `/usr/bin/ssh-copy-id -f -i <pub> -o ControlMaster=no -o ControlPath=none -- <alias>`。结果分为：已安装、已存在、指纹变化、未信任主机、认证失败、取消、超时、其他错误（只显示筛选后的末几行，不含任何输入内容）。
+- **偏离原计划的两处决定：**
+  - 使用 `-f` 跳过 ssh-copy-id 自带的“是否已安装”检查。实测发现它试登时会同时使用配置里已有的 `IdentityFile`，旧密钥能登录时会把新密钥误判为“已存在”而跳过安装。改为由 ConfigSSH 按**指纹**判断服务器接受的是不是新密钥。
+  - **不提供 SFTP 模式（`-s`）**。实测发现 ssh-copy-id 的 SFTP 模式会用 `ssh -f -M` 开后台主连接，该进程脱离进程组、取消或出错时可能残留；主连接失败时，其 `sftp` 还会按用户真实配置连接一个字面名为 `ignored` 的主机。只允许 SFTP 的服务器暂不支持。
+- 新增 `GroupProcess`：用 `posix_spawn` 在独立进程组中运行，取消或超时时结束整组（ssh-copy-id → ssh → askpass），先 SIGTERM，1 秒后 SIGKILL；环境变量只给子进程，并去掉继承的 `SSH_ASKPASS*`。
+- `KeyIndex.readPublicKey` 抽出为可复用的公钥读取（只读 `.pub`、拒绝符号链接与超大文件）；`DeployableKey` 要求私钥是普通文件（不读取内容）。
+- 验收：测试辅助 `TestSSHServer` 在 `/tmp` 下用普通用户权限启动 `127.0.0.1` 上的 `sshd`，客户端使用独立配置（`IdentitiesOnly yes`、`IdentityAgent none`、独立 known_hosts），ssh-copy-id 使用独立 HOME，测试用 askpass 记录所有提示。新增 10 项测试：首次安装（指纹确认与认证提示都经 askpass）、重复部署不追加重复行、旧密钥可登录时不误判、拒绝指纹时不安装且不索要凭据、服务器指纹变化时停止、认证失败、取消结束整个进程树、超时、参数与环境隔离、私钥符号链接拒绝。`swift test` **148 项通过**（连续 3 次）；测试后真实 `~/.ssh` 下无 ssh-copy-id 残留目录，`/tmp` 夹具与 sshd 进程均已清理。
+- 未实测：**真实密码认证**。普通用户权限的 sshd 无法校验系统密码，测试中用“带口令的引导密钥”代替密码这一步（同样经 askpass 提示并由测试脚本回答）；真实服务器的密码提示路径需在 W5 后手工验收。
