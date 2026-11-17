@@ -61,6 +61,7 @@ jobs:
           export CONFIGSSH_VERSION="${RELEASE_TAG#v}"
           ./scripts/package-macos.sh
           test -x "$CONFIGSSH_APP_OUTPUT/Contents/MacOS/ConfigSSH"
+          test -x "$CONFIGSSH_APP_OUTPUT/Contents/Helpers/configssh-askpass"
           test -f "$CONFIGSSH_APP_OUTPUT/Contents/Resources/ConfigSSH.icns"
           test -f "$CONFIGSSH_APP_OUTPUT/Contents/Resources/LICENSE.txt"
           test -d "$CONFIGSSH_APP_OUTPUT/Contents/Resources/ConfigSSH_ConfigSSH.bundle"

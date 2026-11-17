@@ -22,12 +22,15 @@ fi
 cd "$repo_root"
 swift build -c release
 binary_dir="$(swift build -c release --show-bin-path)"
-mkdir -p "$(dirname "$app_output")" "$app_output/Contents/MacOS" "$app_output/Contents/Resources"
+mkdir -p "$(dirname "$app_output")" "$app_output/Contents/MacOS" "$app_output/Contents/Resources" "$app_output/Contents/Helpers"
 cp "$binary_dir/ConfigSSH" "$app_output/Contents/MacOS/ConfigSSH"
 cp "$repo_root/Assets/ConfigSSH.icns" "$app_output/Contents/Resources/ConfigSSH.icns"
 cp "$repo_root/LICENSE" "$app_output/Contents/Resources/LICENSE.txt"
 cp -R "$binary_dir/ConfigSSH_ConfigSSH.bundle" "$app_output/Contents/Resources/ConfigSSH_ConfigSSH.bundle"
 chmod 755 "$app_output/Contents/MacOS/ConfigSSH"
+# OpenSSH askpass helper used by the deploy-key wizard; it must sit in Contents/Helpers.
+cp "$binary_dir/configssh-askpass" "$app_output/Contents/Helpers/configssh-askpass"
+chmod 755 "$app_output/Contents/Helpers/configssh-askpass"
 
 cat > "$app_output/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -52,6 +55,9 @@ EOF
 
 plutil -lint "$app_output/Contents/Info.plist"
 if [[ -n "${CONFIGSSH_SIGNING_IDENTITY:-}" ]]; then
+  # Sign the nested helper first; the app signature then seals it.
+  codesign --force --options runtime --timestamp \
+    --sign "$CONFIGSSH_SIGNING_IDENTITY" "$app_output/Contents/Helpers/configssh-askpass"
   codesign --force --options runtime --timestamp --entitlements "$repo_root/ConfigSSH.entitlements" \
     --sign "$CONFIGSSH_SIGNING_IDENTITY" "$app_output"
   codesign --verify --deep --strict "$app_output"
