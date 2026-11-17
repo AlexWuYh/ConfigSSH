@@ -180,3 +180,17 @@
 
 - 三张 README 截图改用同一份 `/tmp` 脱敏示例配置，从当前源码的 Debug 应用（`CONFIGSSH_PREVIEW_ROOT` + `CONFIGSSH_PREVIEW_SECTION`）重新截取真实窗口：主机详情新增 `IdentityFile ~/.ssh/keys/id_ed25519_demo` 与 `IdentitiesOnly yes`；全局配置显示示例全局参数及 Include；密钥页显示临时生成的示例 Ed25519 公钥及其关联主机 `api`。
 - 示例数据仅含 `example.net`、文档网段 `192.0.2.21` 与临时目录路径；密钥为截图专用的一次性临时密钥。未读取真实 `~/.ssh`，未执行 SSH 连接或 iCloud 操作。三张图均为 1892 × 1352 PNG，README 图片路径未变。
+
+## 2026 年 11 月 17 日首个 Release
+
+- 更新 `v0.1.0` Release Notes（补充 IdentitiesOnly、云端文件覆盖、单块删除、全文编辑冲突与写入加固），经 PR #5 合入 `main` 后推送 tag。发布流水线（run `44005861723`）成功创建 **Pre-release**，附 `ConfigSSH-v0.1.0-unsigned-macos-arm64.zip` 与 `SHA256SUMS.txt`。
+- 本机下载核对：`shasum -a 256 -c` 通过，包内 Bundle ID 为 `cn.wuewa.configssh`，含资源 bundle、图标与 LICENSE，签名为 adhoc（未签名、未公证）。这是首次真实 tag 触发验证，发布路径已跑通；仍不能称为正式公开分发版本。
+
+## 2026 年 11 月 17 日连接复用开关
+
+- 主机编辑表单新增“连接复用”分区：开关开启时写入 `ControlMaster auto`、`ControlPath ~/.ssh/cm/%C`、`ControlPersist <n>m`；保留时间可选 5/10/30/60 分钟或自定义 1–60 分钟，默认 10 分钟。关闭时只删除这三行，其他字节不变；未变化的等价写法（如 `AUTO`、`600`）保留原样。
+- 已有值不在受管范围内（`ControlPersist yes`/`0`/超过 60 分钟、其他 ControlPath、`autoask` 等）时显示为“自定义”，这三项只读，其他字段仍可编辑；核心层同样拒绝改写或写入超范围值。
+- 提交时在 `~/.ssh` 下以目录描述符和 `O_NOFOLLOW` 创建 `~/.ssh/cm`（0700）；已存在但为符号链接、不属于当前用户或对他人开放时拒绝并清理本次备份。用户目录过长导致 socket 路径超过 macOS 104 字节限制时拒绝开启。
+- 详情页显示复用状态；“其他方式”菜单在已配置复用时提供“断开复用连接”，仅在点击时以参数数组运行 `/usr/bin/ssh -o BatchMode=yes -O exit -- <alias>`，不在刷新或后台运行。
+- 顺带修复：CRLF 文件中给 Host 新增字段时，因 Swift 把 `\r\n` 视为单个字符，误插入一行空行。新增回归测试（修复前失败、修复后通过）。
+- 验证：`swift test` **131 项通过**（新增 13 项：时间格式解析、新增/开关/调时长/关闭的字节级结果、等价写法保留、5 种自定义值只读、范围拒绝、目录权限与符号链接拒绝、`ssh -G` 对独立临时文件的解析、`-O exit` 参数与未运行状态、CRLF 回归）；`swift build -c release`、`git diff --check` 通过。用 `/tmp` 脱敏夹具启动 Debug 应用，实窗核对详情页状态、受管主机的开关/时长控件与自定义主机的只读提示。新增 Debug 专用 `CONFIGSSH_PREVIEW_EDIT_HOST` 用于打开编辑表单截图。未实测：真实服务器上的复用与断开，以及表单中开关的实际点击交互（合成点击事件被系统忽略）。

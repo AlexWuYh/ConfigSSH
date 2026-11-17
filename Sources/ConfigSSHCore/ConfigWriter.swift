@@ -38,6 +38,15 @@ package struct ConfigWriter: Sendable {
             throw error
         }
 
+        if let directory = plan.privateDirectory {
+            do {
+                try SafeFileIO.ensurePrivateDirectory(directory, anchor: rootURL.deletingLastPathComponent())
+            } catch {
+                records.forEach(backups.remove)
+                throw error
+            }
+        }
+
         var applied: [PlannedFileChange] = []
         do {
             for change in plan.changes {
@@ -429,6 +438,7 @@ package struct ConfigWriter: Sendable {
         case .add(let input):
             try validate(input, requireHostName: true)
             try validateIdentitiesOnly(input, existing: nil)
+            try validateConnectionReuse(input, existing: nil)
             guard !scan.hosts.contains(where: { $0.alias.caseInsensitiveCompare(input.alias) == .orderedSame }) else {
                 throw ConfigEditError.invalid("Host 别名已存在：\(input.alias)")
             }
@@ -471,6 +481,7 @@ package struct ConfigWriter: Sendable {
             }
             try validate(input, requireHostName: false)
             try validateIdentitiesOnly(input, existing: host)
+            try validateConnectionReuse(input, existing: host)
             let current = try SafeFileIO.snapshot(at: host.sourceURL)
             guard current.version.sha256 == scan.sources.first(where: { $0.url == host.sourceURL })?.sha256 else {
                 throw ConfigEditError.conflict("主机源文件已变化，请重新载入")
@@ -518,8 +529,19 @@ package struct ConfigWriter: Sendable {
             title = "删除主机 \(host.alias)"
             expectedAlias = nil
         }
-        return ConfigChangePlan(title: title, targetAlias: expectedAlias,
-                                checkedVersions: Array(versions.values), changes: changes)
+        var plan = ConfigChangePlan(title: title, targetAlias: expectedAlias,
+                                    checkedVersions: Array(versions.values), changes: changes)
+        switch action {
+        case .add(let input), .update(_, let input):
+            if case .minutes = input.connectionReuse { plan.privateDirectory = controlSocketDirectoryURL }
+        case .delete: break
+        }
+        return plan
+    }
+
+    /// `~/.ssh/cm`, the directory behind `ConnectionReuse.controlPath`. ssh does not create it.
+    package var controlSocketDirectoryURL: URL {
+        rootURL.deletingLastPathComponent().appendingPathComponent("cm", isDirectory: true)
     }
 
     private func editableHost(_ id: String, in scan: ConfigScan) throws -> HostRecord {
@@ -838,6 +860,35 @@ package struct ConfigWriter: Sendable {
         throw ConfigEditError.invalid("开启 IdentitiesOnly 前，请先填写或选择 IdentityFile 密钥文件。开启后 SSH 只会使用这里指定的密钥，没有密钥将无法通过密钥认证。")
     }
 
+    /// Only the managed shape may be written, and a host whose existing multiplexing lines are
+    /// custom keeps them byte for byte: the form shows them read-only instead of normalising.
+    private func validateConnectionReuse(_ input: HostInput, existing: HostRecord?) throws {
+        let current = existing.map(ConnectionReuse.init(host:)) ?? .off
+        switch input.connectionReuse {
+        case .minutes(let minutes):
+            guard ConnectionReuse.allowedMinutes.contains(minutes) else {
+                throw ConfigEditError.invalid("连接复用的保留时间必须是 \(ConnectionReuse.allowedMinutes.lowerBound) 到 \(ConnectionReuse.allowedMinutes.upperBound) 分钟")
+            }
+            guard current.isManaged else {
+                throw ConfigEditError.unsafe("此主机已有自定义的 ControlMaster/ControlPath/ControlPersist，请在源文件中修改")
+            }
+            // ssh expands `~` from the real home; `%C` is 40 hex characters; macOS caps socket paths at 104 bytes.
+            let socketPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".ssh/cm/" + String(repeating: "0", count: 40)).path
+            guard socketPath.utf8.count < 104 else {
+                throw ConfigEditError.unsafe("用户目录路径过长，连接复用的 socket 路径会超过 macOS 的 104 字节限制")
+            }
+        case .off:
+            guard current.isManaged else {
+                throw ConfigEditError.unsafe("此主机已有自定义的 ControlMaster/ControlPath/ControlPersist，请在源文件中修改")
+            }
+        case .custom:
+            guard current == input.connectionReuse else {
+                throw ConfigEditError.invalid("不能通过表单写入自定义的连接复用设置")
+            }
+        }
+    }
+
     /// OpenSSH separates a keyword from its value with whitespace (space or tab) or `=`.
     private func startsWithKeyword(_ lowercasedLine: String, _ keyword: String) -> Bool {
         guard lowercasedLine.hasPrefix(keyword),
@@ -879,7 +930,8 @@ package struct ConfigWriter: Sendable {
     private func render(_ input: HostInput, newline: String) -> String {
         let fields = [("HostName", input.hostName, false), ("User", input.user, false), ("Port", input.port, false),
                       ("IdentityFile", input.identityFile, true), ("IdentitiesOnly", input.identitiesOnly.rawValue, false),
-                      ("ProxyJump", input.proxyJump, false)]
+                      ("ProxyJump", input.proxyJump, false)] +
+            input.connectionReuse.desiredOptions.map { ($0.0, $0.1, false) }
         return (["Host \(input.alias)"] + fields.compactMap { key, value, allowsSpaces in
             value.isEmpty ? nil : "  \(key) \(allowsSpaces ? encodePath(value) : value)"
         }).joined(separator: newline) + newline
@@ -903,7 +955,8 @@ package struct ConfigWriter: Sendable {
         }
         let desired = [("HostName", input.hostName), ("User", input.user), ("Port", input.port),
                        ("IdentityFile", encodePath(input.identityFile)),
-                       ("IdentitiesOnly", input.identitiesOnly.rawValue), ("ProxyJump", input.proxyJump)]
+                       ("IdentitiesOnly", input.identitiesOnly.rawValue), ("ProxyJump", input.proxyJump)] +
+            input.connectionReuse.desiredOptions
         let lines = byteLines(in: data)
         var edits: [(range: Range<Int>, replacement: Data)] = []
         var additions: [String] = []
@@ -923,6 +976,11 @@ package struct ConfigWriter: Sendable {
                 }
                 if existingChoice == input.identitiesOnly { continue }
             }
+            if name == "ControlMaster",
+               option.arguments.joined(separator: " ").caseInsensitiveCompare(value) == .orderedSame { continue }
+            if name == "ControlPersist", !value.isEmpty,
+               ConnectionReuse.persistSeconds(option.arguments.joined(separator: " ")) ==
+                ConnectionReuse.persistSeconds(value) { continue }
             let existingValue = name.caseInsensitiveCompare("IdentityFile") == .orderedSame
                 ? option.arguments.first ?? ""
                 : option.arguments.joined(separator: " ")
@@ -947,7 +1005,9 @@ package struct ConfigWriter: Sendable {
                   lastLine.range.upperBound <= host.byteRange.upperBound else {
                 throw ConfigEditError.conflict("无法定位 Host 的最后一行，请重新载入")
             }
-            let prefix = lastLine.text.hasSuffix("\n") ? "" : newline
+            // Swift treats "\r\n" as one Character, so `hasSuffix("\n")` is false for CRLF lines.
+            let endsWithNewline = lastLine.text.hasSuffix("\n") || lastLine.text.hasSuffix("\r\n")
+            let prefix = endsWithNewline ? "" : newline
             edits.append((lastLine.range.upperBound..<lastLine.range.upperBound,
                           Data((prefix + additions.joined(separator: newline) + newline).utf8)))
         }
