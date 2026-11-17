@@ -24,7 +24,7 @@ struct SettingsView: View {
     @State private var isIndexingSnapshotKeys = false
     @State private var snapshotKeyIndexTask: Task<Void, Never>?
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage("globalShortcut") private var globalShortcut = GlobalShortcutChoice.off.rawValue
+    @AppStorage(GlobalShortcutChoice.defaultsKey) private var globalShortcut = GlobalShortcutChoice.default.rawValue
     @State private var iCloudDriveAvailable = true
     @State private var launchService = TerminalLaunchService()
     @State private var profiles: [TerminalProfile] = []
@@ -250,6 +250,7 @@ struct SettingsView: View {
             .tag(1)
 
             Form {
+                Section("外观与启动") {
                 Picker("外观", selection: $appearance) {
                     Text("跟随系统").tag("system")
                     Text("浅色").tag("light")
@@ -260,22 +261,32 @@ struct SettingsView: View {
                     set: { updateLoginItem($0) }
                 ))
                 .disabled(Bundle.main.bundleURL.pathExtension != "app")
-                Text("主窗口按 ⌘K 打开快速连接；菜单栏图标也可搜索主机。全局快捷键默认不启用。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Picker("全局快捷键", selection: $globalShortcut) {
-                    ForEach(GlobalShortcutChoice.allCases) { choice in
-                        Text(choice.title).tag(choice.rawValue)
-                    }
-                }
-                if globalShortcut != GlobalShortcutChoice.off.rawValue,
-                   globalShortcut != GlobalShortcutManager.shared.activeRawValue {
-                    Label("所选快捷键当前未生效（可能已被其他应用占用），请选择另一组合。",
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
                 if Bundle.main.bundleURL.pathExtension != "app" {
                     Text("登录时启动需要从打包后的 ConfigSSH.app 运行。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                }
+                Section("快速连接") {
+                    Picker("全局快捷键", selection: $globalShortcut) {
+                        ForEach(GlobalShortcutChoice.allCases) { choice in
+                            Text(choice.title).tag(choice.rawValue)
+                        }
+                    }
+                    if let choice = GlobalShortcutChoice(rawValue: globalShortcut), let note = choice.conflictNote {
+                        Label(note, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                    if globalShortcut != GlobalShortcutChoice.off.rawValue,
+                       globalShortcut != GlobalShortcutManager.shared.activeRawValue {
+                        Label("所选快捷键当前未生效（可能已被其他应用占用），请选择另一组合。",
+                              systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                    Button("立即试用") { GlobalShortcutManager.shared.showPanel() }
+                        .disabled(globalShortcut == GlobalShortcutChoice.off.rawValue)
+                    Text("在任何应用中按全局快捷键，屏幕上方会弹出主机搜索框：输入关键词，用 ↑↓ 选择，回车即用默认终端连接；Esc 或再次按快捷键关闭。也可以点击菜单栏图标搜索；主窗口内按 ⌘K。快捷键只在 ConfigSSH 运行时有效，建议同时开启“登录时启动”。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

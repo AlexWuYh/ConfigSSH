@@ -21,10 +21,19 @@ enum BrandIcon {
         return image
     }()
 
+    /// Menu bar status-item glyph. The 64 px PNG loads as 64×64 *points*, and `MenuBarExtra`
+    /// sizes the status item from the image itself (a SwiftUI `.frame` on the label is ignored),
+    /// so set the point size here: 18 pt matches system status icons, and the glyph's built-in
+    /// padding keeps the drawn mark at about 13 pt.
+    static let menuBarPointSize: CGFloat = 18
+
     static let menuImage: NSImage = {
         guard let url = Bundle.module.url(forResource: "ConfigSSH-Menu", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else { return image }
+              let source = NSImage(contentsOf: url) else { return BrandIcon.image }
+        let image = source.copy() as! NSImage
+        image.size = NSSize(width: menuBarPointSize, height: menuBarPointSize)
         image.isTemplate = true
+        image.accessibilityDescription = "ConfigSSH"
         return image
     }()
 }

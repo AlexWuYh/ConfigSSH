@@ -3,11 +3,20 @@ import ConfigSSHCore
 import SwiftUI
 
 struct QuickLaunchView: View {
+    enum Style {
+        /// Menu bar dropdown and the main window's ⌘K sheet.
+        case embedded
+        /// Global-shortcut panel: floating, Spotlight-like, closes after handing off to a terminal.
+        case floatingPanel
+    }
+
+    let style: Style
     let onEscape: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
-    init(onEscape: (() -> Void)? = nil) {
+    init(style: Style = .embedded, onEscape: (() -> Void)? = nil) {
+        self.style = style
         self.onEscape = onEscape
     }
 
@@ -58,9 +67,11 @@ struct QuickLaunchView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "magnifyingglass")
+                    .font(style == .floatingPanel ? .title2 : .body)
                     .foregroundStyle(.secondary)
                 TextField("搜索主机、地址或标签", text: $query)
                     .textFieldStyle(.plain)
+                    .font(style == .floatingPanel ? .title2 : .body)
                     .focused($searchFocused)
                     .onSubmit { launchSelected() }
                     .onKeyPress(.downArrow) {
@@ -127,11 +138,11 @@ struct QuickLaunchView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 300)
+                .frame(maxHeight: style == .floatingPanel ? .infinity : 300)
             }
             if let host = selectedHost {
                 HStack {
-                    Text("↵ 连接 · ⌘K 快速打开")
+                    Text(style == .floatingPanel ? "↑↓ 选择 · ↵ 连接 · Esc 关闭" : "↵ 连接 · ⌘K 快速打开")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -165,7 +176,15 @@ struct QuickLaunchView: View {
             }
         }
         .padding(16)
-        .frame(width: 520)
+        .frame(width: style == .floatingPanel ? 560 : 520)
+        .frame(maxHeight: style == .floatingPanel ? .infinity : nil, alignment: .top)
+        .background {
+            if style == .floatingPanel {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.regularMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.quaternary))
+            }
+        }
         .tint(BrandPalette.accent(for: colorScheme))
         .onExitCommand(perform: close)
         .onAppear {
@@ -260,7 +279,7 @@ struct QuickLaunchView: View {
                 } else {
                     statusMessage = "已交给 \(terminal.displayName)，但本地历史不可用。"
                 }
-                if focused { close() }
+                if focused || style == .floatingPanel { close() }
             } catch {
                 statusMessage = error.localizedDescription
             }

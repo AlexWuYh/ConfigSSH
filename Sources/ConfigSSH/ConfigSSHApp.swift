@@ -24,10 +24,16 @@ struct ConfigSSHApp: App {
 
     init() {
         NSApplication.shared.applicationIconImage = BrandIcon.image
-        _ = GlobalShortcutManager.shared.apply(
-            UserDefaults.standard.string(forKey: "globalShortcut") ?? "off"
-        )
+        _ = GlobalShortcutManager.shared.apply(GlobalShortcutChoice.stored.rawValue)
         Task { @MainActor in AutoSnapshotScheduler.shared.start() }
+        #if DEBUG
+        if ConfigSSHPaths.isPreviewMode, ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_QUICK_PANEL"] == "1" {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                GlobalShortcutManager.shared.showPanel()
+            }
+        }
+        #endif
         Task { @MainActor in UpdateChecker.shared.checkAtLaunchIfEnabled() }
     }
 
@@ -50,9 +56,6 @@ struct ConfigSSHApp: App {
                 .preferredColorScheme(colorScheme)
         } label: {
             Image(nsImage: BrandIcon.menuImage)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 16, height: 16)
                 .accessibilityLabel("ConfigSSH 快速连接")
         }
         .menuBarExtraStyle(.window)
