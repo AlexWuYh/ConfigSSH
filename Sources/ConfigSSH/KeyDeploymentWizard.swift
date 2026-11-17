@@ -124,12 +124,12 @@ struct KeyDeploymentWizard: View {
 
     @ViewBuilder
     private var chooseKeyStep: some View {
-        Text("选择要安装到服务器的密钥").font(.title3.bold())
         if initialHost == nil {
-            Picker("目标主机", selection: $hostID) {
-                Text("请选择").tag(String?.none)
-                ForEach(hosts) { host in Text(host.alias).tag(String?.some(host.id)) }
-            }
+            Text("选择目标主机和密钥").font(.title3.bold())
+            TargetHostPicker(hosts: hosts, selection: $hostID)
+            Text("密钥").font(.headline)
+        } else {
+            Text("选择要安装到服务器的密钥").font(.title3.bold())
         }
         if keys.isEmpty {
             ContentUnavailableView("还没有可用的密钥", systemImage: "key",
@@ -426,6 +426,80 @@ struct KeyDeploymentWizard: View {
             self.plan = nil
             planError = error.localizedDescription
         }
+    }
+}
+
+/// Searchable list for choosing the target host; matches alias, HostName, User and group.
+private struct TargetHostPicker: View {
+    let hosts: [HostRecord]
+    @Binding var selection: String?
+    @State private var query = ""
+
+    private var filtered: [HostRecord] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? hosts : hosts.filter { $0.matches(trimmed) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("目标主机").font(.headline)
+                Spacer()
+                if let selected = hosts.first(where: { $0.id == selection }) {
+                    Label(selected.alias, systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .font(.callout)
+                }
+            }
+            TextField("搜索别名、地址、用户或分组", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("deployHostSearch")
+            Text(query.isEmpty ? "共 \(hosts.count) 台主机" : "匹配 \(filtered.count) / \(hosts.count) 台")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(filtered) { host in
+                        HStack(spacing: 10) {
+                            Image(systemName: host.id == selection ? "largecircle.fill.circle" : "circle")
+                                .foregroundStyle(Color.accentColor)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(host.alias).font(.body.weight(.medium))
+                                Text([host.user.map { "\($0)@" }, host.hostName].compactMap { $0 }.joined())
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if let group = host.configGroup {
+                                Text(group)
+                                    .font(.caption)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.quaternary, in: Capsule())
+                            }
+                            if host.option("IdentityFile") != nil {
+                                Image(systemName: "key.horizontal")
+                                    .foregroundStyle(.secondary)
+                                    .help("已设置 IdentityFile")
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(host.id == selection ? Color.accentColor.opacity(0.12) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 6))
+                        .contentShape(Rectangle())
+                        .onTapGesture { selection = host.id }
+                    }
+                    if filtered.isEmpty {
+                        Text("没有匹配的主机").foregroundStyle(.secondary).padding(10)
+                    }
+                }
+            }
+            .frame(height: 190)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+        }
+        Divider()
     }
 }
 

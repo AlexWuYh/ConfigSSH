@@ -72,6 +72,10 @@ struct SnapshotBrowserView: View {
                             .font(.callout.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                        if snapshot.manifest.isAutomatic == true {
+                            Label("自动快照（仅配置文件）", systemImage: "clock.arrow.circlepath")
+                                .foregroundStyle(.secondary)
+                        }
                         if snapshot.manifest.includesKeys {
                             Label("此快照包含密钥文件。应用内恢复只处理配置文件，不会恢复私钥。",
                                   systemImage: "exclamationmark.shield.fill")

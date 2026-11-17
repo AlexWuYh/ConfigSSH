@@ -1,3 +1,4 @@
+import ConfigSSHCore
 import AppKit
 import SwiftUI
 
@@ -54,38 +55,114 @@ struct BrandHeaderView: View {
 }
 
 struct AboutConfigSSHView: View {
+    @AppStorage(UpdateChecker.autoCheckKey) private var checkAtLaunch = false
+    private let checker = UpdateChecker.shared
+
     var body: some View {
-        VStack(spacing: 16) {
-            Image(nsImage: BrandIcon.image)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 88, height: 88)
-            Text("ConfigSSH")
-                .font(.largeTitle.bold())
-            Text("Manage SSH Config Visually. Connect Effortlessly.")
-                .font(.headline)
-            Text("让 SSH 配置管理更简单，让服务器连接更高效。")
-                .foregroundStyle(.secondary)
-            Text("原生 macOS SSH Config 可视化管理工具")
-                .foregroundStyle(.secondary)
-            Text("Native · Simple · Local First")
-                .font(.callout.monospaced())
-                .foregroundStyle(.secondary)
-            Text("MIT License · © 2026 ConfigSSH contributors")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            GroupBox("常用命令") {
-                Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                    GridRow { Text("⌘N").font(.body.monospaced()); Text("新增主机配置") }
-                    GridRow { Text("⌘K").font(.body.monospaced()); Text("快速连接") }
-                    GridRow { Text("⌘,").font(.body.monospaced()); Text("打开设置") }
+        ScrollView {
+            VStack(spacing: 14) {
+                Image(nsImage: BrandIcon.image)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 88, height: 88)
+                Text("ConfigSSH")
+                    .font(.largeTitle.bold())
+                Text(UpdateChecker.currentVersion.map { "版本 \($0)" } ?? "开发版")
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text("Manage SSH Config Visually. Connect Effortlessly.")
+                    .font(.headline)
+                Text("让 SSH 配置管理更简单，让服务器连接更高效。")
+                    .foregroundStyle(.secondary)
+                Text("Native · Simple · Local First")
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.secondary)
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                                .foregroundStyle(.secondary)
+                            Link("github.com/AlexWuYh/ConfigSSH", destination: UpdateCheck.repositoryURL)
+                            Spacer()
+                            Button("复制") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(UpdateCheck.repositoryURL.absoluteString, forType: .string)
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                        }
+                        Divider()
+                        updateSection
+                    }
+                    .padding(6)
                 }
-                .padding(10)
+                .frame(maxWidth: 420)
+
+                GroupBox("常用命令") {
+                    Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
+                        GridRow { Text("⌘N").font(.body.monospaced()); Text("新增主机配置") }
+                        GridRow { Text("⌘K").font(.body.monospaced()); Text("快速连接") }
+                        GridRow { Text("⌘,").font(.body.monospaced()); Text("打开设置") }
+                    }
+                    .padding(10)
+                }
+                .frame(maxWidth: 420)
+                Text("MIT License · © 2026 ConfigSSH contributors")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 360)
-            Spacer(minLength: 0)
+            .padding(24)
+            .frame(maxWidth: .infinity)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #if DEBUG
+        .task {
+            if ConfigSSHPaths.isPreviewMode, ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_CHECK_UPDATE"] == "1" {
+                checker.check()
+            }
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var updateSection: some View {
+        HStack {
+            Button(checker.state == .checking ? "正在检查…" : "检查更新") { checker.check() }
+                .disabled(checker.state == .checking)
+            if checker.state == .checking { ProgressView().controlSize(.small) }
+            Spacer()
+            Link("所有版本", destination: UpdateCheck.releasesPageURL)
+                .font(.callout)
+        }
+        switch checker.state {
+        case .idle, .checking:
+            EmptyView()
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+                .font(.callout)
+        case .finished(.upToDate(let current), let date):
+            Label("已是最新版本（\(current)）· \(date.formatted(date: .omitted, time: .shortened)) 检查",
+                  systemImage: "checkmark.circle")
+                .font(.callout)
+        case .finished(.updateAvailable(let release), _):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("发现新版本 \(release.tag)\(release.isPrerelease ? "（预发布）" : "")",
+                      systemImage: "arrow.down.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .font(.callout.bold())
+                Link("在 GitHub 查看并下载", destination: release.pageURL)
+                    .font(.callout)
+                Text("ConfigSSH 不会自动下载或安装更新。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        Toggle("启动时自动检查更新", isOn: $checkAtLaunch)
+            .font(.callout)
+        Text("检查更新只会向 GitHub 请求公开的版本列表，不发送任何主机或配置信息。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }

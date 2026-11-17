@@ -27,6 +27,8 @@ struct ConfigSSHApp: App {
         _ = GlobalShortcutManager.shared.apply(
             UserDefaults.standard.string(forKey: "globalShortcut") ?? "off"
         )
+        Task { @MainActor in AutoSnapshotScheduler.shared.start() }
+        Task { @MainActor in UpdateChecker.shared.checkAtLaunchIfEnabled() }
     }
 
     var body: some Scene {

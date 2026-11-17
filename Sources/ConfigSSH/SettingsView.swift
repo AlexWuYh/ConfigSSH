@@ -15,6 +15,9 @@ struct SettingsView: View {
     @AppStorage("defaultOpenMode") private var defaultOpenModeRaw = TerminalOpenMode.window.rawValue
     @AppStorage("backupLimit") private var backupLimit = 50
     @AppStorage("snapshotICloudFolder") private var snapshotICloudFolder = ""
+    @AppStorage(AutoSnapshotScheduler.intervalKey) private var autoSnapshotInterval = AutoSnapshotInterval.daily.rawValue
+    @AppStorage(AutoSnapshotScheduler.keepKey) private var autoSnapshotKeep = AutoSnapshotService.defaultKeep
+    @AppStorage(AutoSnapshotScheduler.lastResultKey) private var autoSnapshotLastResult = ""
     @State private var snapshotIncludeKeys = false
     @State private var snapshotKeys: [PublicKeyRecord] = []
     @State private var selectedSnapshotKeyIDs: Set<String> = []
@@ -46,6 +49,8 @@ struct SettingsView: View {
         #if DEBUG
         if ConfigSSHPaths.isPreviewMode &&
             ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "backup" { return 1 }
+        if ConfigSSHPaths.isPreviewMode &&
+            ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "about" { return 3 }
         #endif
         return 0
     }
@@ -104,6 +109,22 @@ struct SettingsView: View {
             .tag(0)
 
             Form {
+                Section("自动快照") {
+                    Picker("自动创建快照", selection: $autoSnapshotInterval) {
+                        ForEach(AutoSnapshotInterval.allCases) { interval in
+                            Text(interval.displayName).tag(interval.rawValue)
+                        }
+                    }
+                    .onChange(of: autoSnapshotInterval) { _, _ in AutoSnapshotScheduler.shared.runNow() }
+                    if autoSnapshotInterval != AutoSnapshotInterval.off.rawValue {
+                        Stepper("保留最近 \(autoSnapshotKeep) 份自动快照", value: $autoSnapshotKeep,
+                                in: AutoSnapshotService.keepRange)
+                        LabeledContent("上次执行", value: autoSnapshotLastResult.isEmpty ? "尚未执行" : autoSnapshotLastResult)
+                    }
+                    Text("App 运行时每小时检查一次：到期且配置有变化时，自动保存 config 与 Include 文件的本机快照。自动快照从不包含密钥；清理时只删除较旧的自动快照，手动快照不受影响。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Section("配置快照") {
                     Text("本机快照可包含配置文件，并在逐次确认后选择密钥；不会上传 iCloud。")
                         .font(.callout)
@@ -405,16 +426,7 @@ struct SettingsView: View {
             URL(fileURLWithPath: snapshotICloudFolder)
     }
 
-    private var localSnapshotFolder: URL {
-        #if DEBUG
-        if ConfigSSHPaths.isPreviewMode {
-            return writer.rootURL.deletingLastPathComponent().deletingLastPathComponent()
-                .appendingPathComponent("Snapshots")
-        }
-        #endif
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/ConfigSSH/Snapshots")
-    }
+    private var localSnapshotFolder: URL { ConfigSSHPaths.localSnapshotFolder }
 
     private func chooseICloudFolder() {
         let panel = NSOpenPanel()
