@@ -149,4 +149,41 @@ final class KeyDeploymentTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("k"), withDestinationURL: publicKey)
         XCTAssertThrowsError(try DeployableKey(publicKeyURL: publicKey, privateKeyURL: directory.appendingPathComponent("k")))
     }
+
+    func testKeyOnlyCheckFailsWithoutAskingForAPassword() throws {
+        let server = try TestSSHServer()
+        try Data().write(to: server.authorizedKeys)
+        let key = try server.makeKey("newkey")
+        let outcome = KeyDeployment.verifyLogin(alias: "target", key: key, options: server.options())
+        XCTAssertEqual(outcome, .rejected)
+        XCTAssertFalse(outcome.isSuccess)
+        XCTAssertTrue(outcome.explanation.contains("StrictModes"))
+        XCTAssertFalse(server.prompts().contains { $0.lowercased().contains("password") })
+    }
+
+    func testOutcomeExplanationsAndNextStep() {
+        XCTAssertTrue(KeyDeploymentOutcome.installed.canVerify)
+        XCTAssertTrue(KeyDeploymentOutcome.alreadyInstalled.canVerify)
+        for outcome in [KeyDeploymentOutcome.hostKeyChanged, .hostKeyNotTrusted, .authenticationFailed, .cancelled, .timedOut, .failed("x")] {
+            XCTAssertFalse(outcome.canVerify, "\(outcome)")
+            XCTAssertFalse(outcome.explanation.isEmpty)
+        }
+        XCTAssertTrue(KeyDeploymentOutcome.hostKeyChanged.explanation.contains("known_hosts"))
+    }
+
+    func testLoginInterpretationUsesTheAcceptedFingerprint() {
+        func result(_ stderr: String, status: Int32 = 0) -> GroupProcess.Result {
+            .init(status: status, stdout: "", stderr: stderr, wasCancelled: false, timedOut: false)
+        }
+        let accepted = "debug1: Server accepts key: /k ED25519 SHA256:NEW explicit\nAuthenticated to h ([1.2.3.4]:22) using \"publickey\".\n"
+        XCTAssertEqual(KeyDeployment.interpretLogin(result(accepted), expectedFingerprint: "SHA256:NEW"), .verified)
+        XCTAssertEqual(KeyDeployment.interpretLogin(result(accepted, status: 1), expectedFingerprint: "SHA256:NEW"), .verified,
+                       "an SFTP-only server refusing the remote command still proves the key works")
+        XCTAssertEqual(KeyDeployment.interpretLogin(result(accepted), expectedFingerprint: "SHA256:OTHER"), .otherKeyAccepted)
+        XCTAssertEqual(KeyDeployment.interpretLogin(result("debug1: Remote: Server accepts key: SHA256:NEW\nuser@h: Permission denied (publickey).\n", status: 255),
+                                                    expectedFingerprint: "SHA256:NEW"), .rejected,
+                       "server-sent text is not mistaken for the client's own debug line")
+        XCTAssertEqual(KeyDeployment.interpretLogin(.init(status: 143, stdout: "", stderr: "", wasCancelled: true, timedOut: false),
+                                                    expectedFingerprint: "SHA256:NEW"), .cancelled)
+    }
 }

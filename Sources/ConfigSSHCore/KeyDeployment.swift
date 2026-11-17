@@ -177,3 +177,50 @@ package enum KeyDeployment {
         return text.isEmpty ? "退出码 \(status)" : String(text.prefix(800))
     }
 }
+
+extension KeyLoginOutcome {
+    /// User-facing result of the key-only login check, with the usual causes when it fails.
+    package var explanation: String {
+        switch self {
+        case .verified:
+            return "已可只用这把密钥登录。"
+        case .otherKeyAccepted:
+            return "服务器接受的是另一把密钥（来自配置或 ssh-agent），这把新密钥本身还不能登录。"
+        case .rejected:
+            return """
+            服务器拒绝了这把密钥。常见原因：服务器上 ~/.ssh 或 authorized_keys 权限过宽（StrictModes 会拒绝）；\
+            sshd 自定义了 AuthorizedKeysFile；sshd 设置了 PubkeyAuthentication no；或公钥被装到了其他用户。
+            """
+        case .hostKeyChanged:
+            return "服务器指纹与已记录的不一致，可能有人冒充服务器。已停止，ConfigSSH 不会修改 known_hosts；请先通过可信渠道核实。"
+        case .hostKeyNotTrusted:
+            return "未信任此服务器的指纹，已停止。"
+        case .cancelled:
+            return "已取消。"
+        case .timedOut:
+            return "连接超时，已停止。"
+        case .failed(let message):
+            return "无法完成验证：\(message)"
+        }
+    }
+
+    package var isSuccess: Bool { self == .verified }
+}
+
+extension KeyDeploymentOutcome {
+    package var explanation: String {
+        switch self {
+        case .installed: return "公钥已安装到服务器。"
+        case .alreadyInstalled: return "服务器上已存在此公钥，并且可以登录。"
+        case .hostKeyChanged: return KeyLoginOutcome.hostKeyChanged.explanation
+        case .hostKeyNotTrusted: return KeyLoginOutcome.hostKeyNotTrusted.explanation
+        case .authenticationFailed: return "服务器认证失败：密码错误、输入被取消，或服务器不允许密码登录。可以返回重试。"
+        case .cancelled: return "已取消，服务器未被修改。"
+        case .timedOut: return "连接超时，已停止。"
+        case .failed(let message): return "部署失败：\(message)"
+        }
+    }
+
+    /// Whether the wizard may go on to the key-only verification step.
+    package var canVerify: Bool { self == .installed || self == .alreadyInstalled }
+}

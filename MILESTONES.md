@@ -234,3 +234,9 @@
 - `KeyIndex.readPublicKey` 抽出为可复用的公钥读取（只读 `.pub`、拒绝符号链接与超大文件）；`DeployableKey` 要求私钥是普通文件（不读取内容）。
 - 验收：测试辅助 `TestSSHServer` 在 `/tmp` 下用普通用户权限启动 `127.0.0.1` 上的 `sshd`，客户端使用独立配置（`IdentitiesOnly yes`、`IdentityAgent none`、独立 known_hosts），ssh-copy-id 使用独立 HOME，测试用 askpass 记录所有提示。新增 10 项测试：首次安装（指纹确认与认证提示都经 askpass）、重复部署不追加重复行、旧密钥可登录时不误判、拒绝指纹时不安装且不索要凭据、服务器指纹变化时停止、认证失败、取消结束整个进程树、超时、参数与环境隔离、私钥符号链接拒绝。`swift test` **148 项通过**（连续 3 次）；测试后真实 `~/.ssh` 下无 ssh-copy-id 残留目录，`/tmp` 夹具与 sshd 进程均已清理。
 - 未实测：**真实密码认证**。普通用户权限的 sshd 无法校验系统密码，测试中用“带口令的引导密钥”代替密码这一步（同样经 askpass 提示并由测试脚本回答）；真实服务器的密码提示路径需在 W5 后手工验收。
+
+### W3 纯密钥验证：已完成（2026 年 11 月 17 日）
+
+- `KeyDeployment.verifyLogin` 以 `ssh -v -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none -i <私钥> -- <alias> true` 试登。判定以 ssh 自身的 `debug1: Server accepts key:` 行中的**指纹**为准，必须等于新密钥指纹且已完成认证才算成功；远端命令的退出码不影响结果，服务器发来的 `Remote:` 文本不会被误认。
+- 每种结果都有面向用户的说明：被拒绝时列出常见原因（StrictModes 权限、自定义 AuthorizedKeysFile、PubkeyAuthentication no、装到了其他用户）；指纹变化时说明不会修改 known_hosts。只有“已安装/已存在”才进入验证步骤。
+- 验收：新增 3 项测试（未安装时直接失败且不出现密码提示、结果说明与下一步判定、指纹判定与服务器伪造文本）；连同 W2 中的“已有复用主连接时仍真实认证”“旧密钥可登录不算成功”，`swift test` **151 项通过**。
