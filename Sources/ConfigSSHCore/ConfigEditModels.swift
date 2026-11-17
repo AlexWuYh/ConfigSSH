@@ -17,6 +17,100 @@ package enum IdentitiesOnlyChoice: String, CaseIterable, Sendable {
     }
 }
 
+/// Host-level OpenSSH connection multiplexing managed by ConfigSSH.
+///
+/// ConfigSSH writes exactly `ControlMaster auto`, `ControlPath ~/.ssh/cm/%C` and
+/// `ControlPersist <n>m` with `n` in `ConnectionReuse.allowedMinutes`. Anything else already
+/// present is `.custom` and left untouched, so the form never rewrites a user's own setup.
+package enum ConnectionReuse: Equatable, Sendable {
+    case off
+    case minutes(Int)
+    /// Some of the three keywords exist with values ConfigSSH does not manage.
+    case custom(String)
+
+    package static let allowedMinutes = 1...60
+    package static let defaultMinutes = 10
+    package static let presetMinutes = [5, 10, 30, 60]
+    package static let controlPath = "~/.ssh/cm/%C"
+    package static let keywords = ["ControlMaster", "ControlPath", "ControlPersist"]
+
+    package init(host: HostRecord) {
+        let values = Self.keywords.map { keyword in
+            host.explicitOptions.filter { $0.keyword.caseInsensitiveCompare(keyword) == .orderedSame }
+        }
+        if values.allSatisfy(\.isEmpty) { self = .off; return }
+        let summary = zip(Self.keywords, values).compactMap { keyword, options in
+            options.isEmpty ? nil : options.map { "\(keyword) \($0.arguments.joined(separator: " "))" }
+                .joined(separator: "，")
+        }.joined(separator: "，")
+        guard values.allSatisfy({ $0.count == 1 }),
+              values[0][0].arguments.joined(separator: " ").lowercased() == "auto",
+              values[1][0].arguments.joined(separator: " ") == Self.controlPath,
+              let seconds = Self.persistSeconds(values[2][0].arguments.joined(separator: " ")),
+              seconds % 60 == 0, Self.allowedMinutes.contains(seconds / 60) else {
+            self = .custom(summary)
+            return
+        }
+        self = .minutes(seconds / 60)
+    }
+
+    package var isManaged: Bool {
+        if case .custom = self { return false }
+        return true
+    }
+
+    /// Desired `(keyword, value)` pairs; an empty value removes the line.
+    package var desiredOptions: [(String, String)] {
+        switch self {
+        case .off: return Self.keywords.map { ($0, "") }
+        case .minutes(let minutes):
+            return [("ControlMaster", "auto"), ("ControlPath", Self.controlPath), ("ControlPersist", "\(minutes)m")]
+        case .custom: return []
+        }
+    }
+
+    package var displayText: String? {
+        switch self {
+        case .off: return nil
+        case .minutes(let minutes): return "已开启 · 最后一个会话关闭后保留 \(minutes) 分钟"
+        case .custom(let summary): return "自定义：\(summary)"
+        }
+    }
+
+    /// Parses an OpenSSH time value (`600`, `10m`, `1h30m`). `yes`, `no` and `0` return nil:
+    /// they mean "forever" or "no background master" and are outside the managed range.
+    package static func persistSeconds(_ raw: String) -> Int? {
+        let text = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty else { return nil }
+        var total = 0
+        var number = ""
+        for character in text {
+            if character.isASCII, character.isNumber {
+                number.append(character)
+                guard number.count <= 7 else { return nil }
+                continue
+            }
+            let multiplier: Int
+            switch character {
+            case "s": multiplier = 1
+            case "m": multiplier = 60
+            case "h": multiplier = 3600
+            case "d": multiplier = 86_400
+            case "w": multiplier = 604_800
+            default: return nil
+            }
+            guard let value = Int(number) else { return nil }
+            total += value * multiplier
+            number = ""
+        }
+        if !number.isEmpty {
+            guard let value = Int(number) else { return nil }
+            total += value
+        }
+        return total > 0 ? total : nil
+    }
+}
+
 package struct HostInput: Equatable {
     package var alias: String
     package var hostName: String
@@ -26,6 +120,7 @@ package struct HostInput: Equatable {
     package var proxyJump: String
     package var group: String
     package var identitiesOnly: IdentitiesOnlyChoice
+    package var connectionReuse: ConnectionReuse
 
     package init(
         alias: String = "",
@@ -35,7 +130,8 @@ package struct HostInput: Equatable {
         identityFile: String = "",
         proxyJump: String = "",
         group: String = "",
-        identitiesOnly: IdentitiesOnlyChoice = .unset
+        identitiesOnly: IdentitiesOnlyChoice = .unset,
+        connectionReuse: ConnectionReuse = .off
     ) {
         self.alias = alias
         self.hostName = hostName
@@ -45,6 +141,7 @@ package struct HostInput: Equatable {
         self.proxyJump = proxyJump
         self.group = group
         self.identitiesOnly = identitiesOnly
+        self.connectionReuse = connectionReuse
     }
 
     package init(host: HostRecord) {
@@ -56,7 +153,8 @@ package struct HostInput: Equatable {
             identityFile: host.option("IdentityFile") ?? "",
             proxyJump: host.option("ProxyJump") ?? "",
             group: host.configGroup ?? "",
-            identitiesOnly: host.option("IdentitiesOnly").flatMap(IdentitiesOnlyChoice.init(configValue:)) ?? .unset
+            identitiesOnly: host.option("IdentitiesOnly").flatMap(IdentitiesOnlyChoice.init(configValue:)) ?? .unset,
+            connectionReuse: ConnectionReuse(host: host)
         )
     }
 }
@@ -117,6 +215,9 @@ package struct ConfigChangePlan: Sendable {
     package let checkedVersions: [FileVersion]
     package let changes: [PlannedFileChange]
     package var warnings: [String] = []
+    /// A private directory (mode 0700) created under `~/.ssh` before the changes are applied,
+    /// used for the connection-reuse `ControlPath` sockets.
+    package var privateDirectory: URL?
 }
 
 private enum LineDiff {

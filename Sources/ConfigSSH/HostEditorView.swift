@@ -39,6 +39,7 @@ struct HostEditorView: View {
     @State private var showsKeyPicker = false
     @State private var isReloading = false
     @State private var identitiesOnlyNeedsKey = false
+    @State private var reuseMinutes = ConnectionReuse.defaultMinutes
 
     init(mode: HostEditorMode, scan: ConfigScan, writer: ConfigWriter, availableKeys: [PublicKeyRecord],
          availableGroups: [String],
@@ -51,7 +52,10 @@ struct HostEditorView: View {
         _workingScan = State(initialValue: scan)
         switch mode {
         case .add(let group): _input = State(initialValue: HostInput(group: group))
-        case .edit(let host), .delete(let host): _input = State(initialValue: HostInput(host: host))
+        case .edit(let host), .delete(let host):
+            let input = HostInput(host: host)
+            _input = State(initialValue: input)
+            if case .minutes(let minutes) = input.connectionReuse { _reuseMinutes = State(initialValue: minutes) }
         }
     }
 
@@ -114,6 +118,9 @@ struct HostEditorView: View {
                             }
                             identitiesOnlyControl
                             TextField("ProxyJump", text: $input.proxyJump)
+                        }
+                        Section("连接复用") {
+                            connectionReuseControl
                         }
                         if let host = mode.existingHost {
                             Section("配置来源") {
@@ -185,7 +192,7 @@ struct HostEditorView: View {
                 .padding(16)
             }
             .navigationTitle(mode.title)
-            .frame(minWidth: 620, minHeight: 520)
+            .frame(minWidth: 620, minHeight: 520, idealHeight: 600)
         }
         .fileImporter(isPresented: $showsKeyPicker, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
@@ -249,6 +256,70 @@ struct HostEditorView: View {
         Text("开启后，SSH 只尝试 IdentityFile 指定的密钥，不再逐个尝试 ssh-agent 中的其他密钥，可避免 “Too many authentication failures”。")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    private var reuseEnabled: Binding<Bool> {
+        Binding(
+            get: { if case .minutes = input.connectionReuse { return true } else { return false } },
+            set: { enabled in
+                input.connectionReuse = enabled ? .minutes(reuseMinutes) : .off
+                plan = nil
+            }
+        )
+    }
+
+    private var reuseMinutesSelection: Binding<Int> {
+        Binding(
+            get: { reuseMinutes },
+            set: { minutes in
+                let clamped = min(max(minutes, ConnectionReuse.allowedMinutes.lowerBound),
+                                  ConnectionReuse.allowedMinutes.upperBound)
+                reuseMinutes = clamped
+                if case .minutes = input.connectionReuse { input.connectionReuse = .minutes(clamped) }
+                plan = nil
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var connectionReuseControl: some View {
+        if case .custom(let summary) = input.connectionReuse {
+            LabeledContent("当前设置") {
+                Text(summary)
+                    .textSelection(.enabled)
+                    .multilineTextAlignment(.trailing)
+            }
+            Label("此主机已有自定义的连接复用设置（超出 1–60 分钟或使用了其他 ControlPath）。为避免改写你的配置，请在源文件中修改。",
+                  systemImage: "lock")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Toggle("复用已建立的连接", isOn: reuseEnabled)
+            if case .minutes = input.connectionReuse {
+                Picker("保留时间", selection: reuseMinutesSelection) {
+                    ForEach(reuseMenuMinutes, id: \.self) { minutes in
+                        Text(minutes == 60 ? "1 小时" : "\(minutes) 分钟").tag(minutes)
+                    }
+                }
+                Stepper(value: reuseMinutesSelection, in: ConnectionReuse.allowedMinutes) {
+                    Text("自定义：\(reuseMinutes) 分钟（1–60）")
+                }
+                Text("所有窗口关闭后，后台连接仍保留所选时间。期间本机打开新会话不再验证身份；端口转发与代理转发沿用第一个连接的设置。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(verbatim: "写入 ControlMaster auto、ControlPath ~/.ssh/cm/%C 与 ControlPersist；~/.ssh/cm 会以仅本人可访问（700）创建。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("开启后，同一台主机只需验证一次；在保留时间内打开新会话会复用已有连接。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var reuseMenuMinutes: [Int] {
+        Array(Set(ConnectionReuse.presetMinutes + [reuseMinutes])).sorted()
     }
 
     private func preview(_ plan: ConfigChangePlan) -> some View {

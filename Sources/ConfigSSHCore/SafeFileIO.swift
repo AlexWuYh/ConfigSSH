@@ -221,6 +221,26 @@ package enum SafeFileIO {
         }
     }
 
+    /// Creates (mode 0700) or verifies a directory below `anchor` without following symlinks.
+    /// An existing directory must be owned by this user and closed to group and others.
+    package static func ensurePrivateDirectory(_ url: URL, anchor: URL) throws {
+        let target = url.standardizedFileURL
+        let root = anchor.standardizedFileURL
+        guard target.path.hasPrefix(root.path + "/") else {
+            throw ConfigEditError.unsafe("目录不在受控目录内：\(target.path)")
+        }
+        try ensureDirectory(root)
+        let directory = try openDirectoryChain(from: root, to: target)
+        defer { _ = Darwin.close(directory) }
+        var info = stat()
+        guard fstat(directory, &info) == 0 else {
+            throw ConfigEditError.io("无法检查目录 \(target.path)：系统错误 \(errno)")
+        }
+        guard info.st_uid == getuid(), info.st_mode & 0o077 == 0 else {
+            throw ConfigEditError.unsafe("目录 \(target.path) 不属于当前用户，或其他用户可以访问；请改为仅本人可访问（chmod 700）后再试")
+        }
+    }
+
     package static func ensureDirectory(_ url: URL) throws {
         let path = url.standardizedFileURL.path
         if path == "/" { return }

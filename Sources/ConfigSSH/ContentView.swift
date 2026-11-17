@@ -239,7 +239,8 @@ struct ContentView: View {
                                    onMetadata: { metadataHost = host },
                                    onToggleFavorite: { toggleFavorite(host) },
                                    onLaunch: { terminal, mode in launch(host, terminal: terminal, mode: mode) },
-                                   onCopyCommand: { copyCommand(host) })
+                                   onCopyCommand: { copyCommand(host) },
+                                   onStopReuse: { stopReuse(host) })
                 } else {
                     ContentUnavailableView("选择一台主机", systemImage: "server.rack")
                 }
@@ -473,6 +474,7 @@ struct ContentView: View {
                 try? await Task.sleep(for: .milliseconds(350))
                 openSettings()
             }
+            await openPreviewEditor()
         }
         #endif
     }
@@ -854,6 +856,36 @@ struct ContentView: View {
         launch(host, terminal: terminal, mode: mode)
     }
 
+    #if DEBUG
+    /// Debug preview only: opens the editor for `CONFIGSSH_PREVIEW_EDIT_HOST` once scanning ends,
+    /// so form screenshots can be taken from a `/tmp` fixture.
+    private func openPreviewEditor() async {
+        guard ConfigSSHPaths.isPreviewMode,
+              let alias = ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_EDIT_HOST"] else { return }
+        for _ in 0..<40 where isScanning {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        if let host = scan.hosts.first(where: { $0.alias == alias }) {
+            editorRequest = EditorRequest(mode: .edit(host))
+        }
+    }
+    #endif
+
+    /// Runs `ssh -O exit` only on an explicit click; it evaluates the config like any ssh call.
+    private func stopReuse(_ host: HostRecord) {
+        let alias = host.alias
+        Task { @MainActor in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                ConnectionReuseControl.stopMaster(alias: alias)
+            }.value
+            switch outcome {
+            case .stopped: showToast("已断开 \(alias) 的复用连接；已打开的会话会一并结束。")
+            case .notRunning: showToast("\(alias) 当前没有正在保留的复用连接。")
+            case .failed(let message): showToast("无法断开复用连接：\(message)", isError: true)
+            }
+        }
+    }
+
     private func copyCommand(_ host: HostRecord) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(TerminalLaunchPlanner.copyableCommand(alias: host.alias), forType: .string)
@@ -966,6 +998,7 @@ private struct HostDetailView: View {
     let onToggleFavorite: () -> Void
     let onLaunch: (TerminalProfile, TerminalOpenMode) -> Void
     let onCopyCommand: () -> Void
+    let onStopReuse: () -> Void
 
     private var selectedTerminal: TerminalProfile? {
         if let id = metadata?.preferredTerminal,
@@ -1038,6 +1071,11 @@ private struct HostDetailView: View {
                                           !TerminalLaunchPlanner.isSafeAlias(host.alias))
                             }
                         }
+                        if ConnectionReuse(host: host) != .off {
+                            Divider()
+                            Button("断开复用连接", action: onStopReuse)
+                                .disabled(!TerminalLaunchPlanner.isSafeAlias(host.alias))
+                        }
                     }
                     .fixedSize()
                     Spacer(minLength: 0)
@@ -1068,6 +1106,7 @@ private struct HostDetailView: View {
                         DetailField(label: "IdentityFile", value: host.option("IdentityFile"))
                         DetailField(label: "IdentitiesOnly", value: host.option("IdentitiesOnly"))
                         DetailField(label: "ProxyJump", value: host.option("ProxyJump"))
+                        DetailField(label: "连接复用", value: ConnectionReuse(host: host).displayText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(4)

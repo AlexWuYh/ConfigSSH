@@ -688,4 +688,17 @@ final class ConfigWriterTests: XCTestCase {
         XCTAssertTrue(try String(contentsOf: paths.root, encoding: .utf8).hasSuffix("  HostName changed.example\n  IdentitiesOnly True\n"),
                       "an unchanged imported value is preserved byte for byte")
     }
+
+    func testAddingFieldToCRLFHostDoesNotInsertBlankLine() throws {
+        let paths = try fixture()
+        try Data("Host web\r\n  HostName web.example\r\n\r\nHost other\r\n".utf8).write(to: paths.root)
+        let writer = ConfigWriter(rootURL: paths.root, backupDirectory: paths.backup)
+        let scan = ConfigReader(rootURL: paths.root).scan()
+        let host = try XCTUnwrap(scan.hosts.first { $0.alias == "web" })
+        var input = HostInput(host: host)
+        input.user = "deploy"
+        _ = try writer.commit(writer.plan(.update(hostID: host.id, input: input), from: scan))
+        XCTAssertEqual(try String(contentsOf: paths.root, encoding: .utf8),
+                       "Host web\r\n  HostName web.example\r\n  User deploy\r\n\r\nHost other\r\n")
+    }
 }
