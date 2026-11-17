@@ -16,6 +16,22 @@ package final class GroupProcess: @unchecked Sendable {
         package let timedOut: Bool
     }
 
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var activeGroups: Set<pid_t> = []
+
+    /// Stops every process group still running, e.g. when ConfigSSH quits mid-deployment.
+    package static func terminateAll() {
+        registryLock.lock()
+        let groups = activeGroups
+        registryLock.unlock()
+        for group in groups { _ = kill(-group, SIGKILL) }
+    }
+
+    package static var activeGroupCount: Int {
+        registryLock.lock(); defer { registryLock.unlock() }
+        return activeGroups.count
+    }
+
     private let lock = NSLock()
     private var pid: pid_t = 0
     private var cancelled = false
@@ -93,6 +109,14 @@ package final class GroupProcess: @unchecked Sendable {
         pid = child
         let cancelledEarly = cancelled
         lock.unlock()
+        Self.registryLock.lock()
+        Self.activeGroups.insert(child)
+        Self.registryLock.unlock()
+        defer {
+            Self.registryLock.lock()
+            Self.activeGroups.remove(child)
+            Self.registryLock.unlock()
+        }
         if cancelledEarly { terminateGroup(child) }
 
         let readers = DispatchGroup()

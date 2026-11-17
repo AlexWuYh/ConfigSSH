@@ -6,6 +6,8 @@ import ConfigSSHCore
 /// ssh runs this program with the prompt as its argument when `SSH_ASKPASS_REQUIRE=force` is set
 /// on the ssh process that ConfigSSH started. The answer is written only to stdout for ssh to
 /// read; nothing is logged or written to disk, and every prompt needs an explicit user answer.
+nonisolated(unsafe) var parentWatch: DispatchSourceProcess?
+
 @MainActor
 struct AlertPresenter: AskpassPresenter {
     func present(_ request: AskpassRequest) -> AskpassAnswer {
@@ -64,8 +66,17 @@ struct AlertPresenter: AskpassPresenter {
     }
 }
 
+let environment = ProcessInfo.processInfo.environment
+if let parent = AskpassParentWatch.parentPID(in: environment) {
+    guard AskpassParentWatch.isAlive(parent) else { exit(1) }
+    let watch = DispatchSource.makeProcessSource(identifier: parent, eventMask: .exit, queue: .global())
+    watch.setEventHandler { exit(1) }
+    watch.resume()
+    parentWatch = watch  // kept alive for the life of the process
+}
+
 let request = AskpassRequest(arguments: Array(CommandLine.arguments.dropFirst()),
-                             environment: ProcessInfo.processInfo.environment)
+                             environment: environment)
 NSApplication.shared.setActivationPolicy(.accessory)
 let output = AskpassResponder.respond(to: request, using: AlertPresenter())
 FileHandle.standardOutput.write(Data(output.stdout.utf8))

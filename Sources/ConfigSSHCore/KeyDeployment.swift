@@ -42,6 +42,7 @@ package struct KeyDeploymentOptions: Sendable {
     package var sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
     package var copyIDExecutable = URL(fileURLWithPath: "/usr/bin/ssh-copy-id")
     package var timeout: TimeInterval = 120
+    package var parentProcessID: pid_t = getpid()
     package var baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     /// Test fixtures only: an `ssh -F` config, a HOME for ssh-copy-id's local scratch directory,
     /// and the remote `authorized_keys` path (`ssh-copy-id -t`). Production leaves them nil.
@@ -91,6 +92,8 @@ package enum KeyDeployment {
         var environment = options.baseEnvironment.filter { !$0.key.hasPrefix("SSH_ASKPASS") }
         environment["SSH_ASKPASS"] = options.askpassURL.path
         environment["SSH_ASKPASS_REQUIRE"] = "force"
+        // Lets the helper exit if ConfigSSH itself goes away (crash or forced quit).
+        environment[AskpassParentWatch.environmentKey] = String(options.parentProcessID)
         if let home = options.homeDirectory { environment["HOME"] = home.path }
         return environment
     }

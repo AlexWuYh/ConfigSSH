@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// What OpenSSH is asking for when it runs the askpass helper.
@@ -105,5 +106,19 @@ package enum AskpassHelperLocator {
         guard url.path.withCString({ lstat($0, &info) }) == 0,
               info.st_mode & S_IFMT == S_IFREG else { return false }
         return FileManager.default.isExecutableFile(atPath: url.path)
+    }
+}
+
+/// ConfigSSH passes its own PID to the askpass helper. If ConfigSSH has gone away (crashed or was
+/// force-quit) the helper must not keep a password dialog on screen for an orphaned ssh.
+package enum AskpassParentWatch {
+    package static let environmentKey = "CONFIGSSH_PARENT_PID"
+
+    package static func parentPID(in environment: [String: String]) -> pid_t? {
+        environment[environmentKey].flatMap { pid_t($0) }.flatMap { $0 > 1 ? $0 : nil }
+    }
+
+    package static func isAlive(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
     }
 }

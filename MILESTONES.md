@@ -240,3 +240,12 @@
 - `KeyDeployment.verifyLogin` 以 `ssh -v -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none -i <私钥> -- <alias> true` 试登。判定以 ssh 自身的 `debug1: Server accepts key:` 行中的**指纹**为准，必须等于新密钥指纹且已完成认证才算成功；远端命令的退出码不影响结果，服务器发来的 `Remote:` 文本不会被误认。
 - 每种结果都有面向用户的说明：被拒绝时列出常见原因（StrictModes 权限、自定义 AuthorizedKeysFile、PubkeyAuthentication no、装到了其他用户）；指纹变化时说明不会修改 known_hosts。只有“已安装/已存在”才进入验证步骤。
 - 验收：新增 3 项测试（未安装时直接失败且不出现密码提示、结果说明与下一步判定、指纹判定与服务器伪造文本）；连同 W2 中的“已有复用主连接时仍真实认证”“旧密钥可登录不算成功”，`swift test` **151 项通过**。
+
+### W5 向导界面：已完成（2026 年 11 月 17 日），待真实服务器手工验收
+
+- 三个入口：主机详情“其他方式”菜单中的“部署公钥…”、主机未设置 IdentityFile 时详情页的提示链接、密钥页的“部署到主机…”。五步向导：选择密钥（不可用的密钥变灰并说明原因，可跳转生成新密钥）→ 确认目标（展示连接参数、远端写入位置，以及“不会读取或保存密码”“核对指纹”“不使用连接复用”三条说明）→ 部署（进度与取消）→ 验证 → 差异预览后写入（已有 IdentityFile 时可选“替换/追加”；只读主机给出可复制片段）。完成页提醒服务器端密码登录需自行关闭。
+- **验收中发现并修复：** 结束 ConfigSSH 进程后，正在等待输入的 ssh 与 askpass 对话框仍留在后台。现在两层兜底：正常退出时 `GroupProcess.terminateAll()` 结束所有部署进程组；崩溃或被强制结束时，askpass 通过 `CONFIGSSH_PARENT_PID` 监视 ConfigSSH 进程，发现其退出立即以失败退出，ssh 随之结束。实测 `kill -9` App 后两者均在 2 秒内退出。
+- 安全复核：对指纹确认对话框发送 ⌘Q、Esc、空格不会关闭或接受，回车选择默认的“拒绝”（退出码 1、无输出）；在提示期间先后结束 ssh 或 askpass 都不会写入 known_hosts（sshd 日志为 `Connection closed by 127.0.0.1 [preauth]`）。
+- 预览模式（仅 Debug）：向导的 ssh 使用 `/tmp` 夹具配置（`-F`），且夹具不得使用 Include；`CONFIGSSH_PREVIEW_DEPLOY_HOST`/`CONFIGSSH_PREVIEW_DEPLOY_STEP` 用于直达步骤截图。
+- 验收：用 `/tmp` 脱敏夹具与本机测试 sshd 启动真实窗口，截图核对第 1 步（含不可用密钥的提示）、第 2 步与第 3 步运行中状态；确认第 3 步实际启动的 ssh 带有 `ControlMaster=no`/`ControlPath=none`，环境中有 `SSH_ASKPASS`、`SSH_ASKPASS_REQUIRE=force` 与 `CONFIGSSH_PARENT_PID`，并由 askpass 弹出口令输入框。`swift test` **163 项通过**（连续 2 次），Release 构建、打包（含 `Contents/Helpers/configssh-askpass`）与 `git diff --check` 通过；测试后无残留 sshd、ssh 或 askpass 进程。
+- **未实测，需要手工验收：** 合成的点击和键盘输入无法驱动对话框与按钮，因此第 3 步之后的界面流程（输入密码 → 验证 → 写入）没有在窗口里走通；该链路由核心层端到端测试覆盖（测试 sshd 上“部署 → 验证 → 写入”）。真实服务器上的**密码**认证也未测试（普通用户权限的 sshd 无法校验系统密码）。请在一台允许密码登录的测试服务器上完整走一遍向导后再合并。

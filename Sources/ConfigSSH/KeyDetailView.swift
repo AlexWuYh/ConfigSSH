@@ -3,6 +3,7 @@ import SwiftUI
 
 struct KeyDetailView: View {
     let key: PublicKeyRecord
+    var onDeploy: () -> Void = {}
     let onCopyPublicKey: () -> Void
 
     var body: some View {
@@ -45,9 +46,13 @@ struct KeyDetailView: View {
                             .padding(4)
                     }
                 }
-                Button("复制公钥", action: onCopyPublicKey)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(key.publicKeyText == nil)
+                HStack(spacing: 10) {
+                    Button("复制公钥", action: onCopyPublicKey)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(key.publicKeyText == nil)
+                    Button("部署到主机…", action: onDeploy)
+                        .disabled(!key.isDeployable)
+                }
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -41,6 +41,13 @@ private enum SidebarSection: String, CaseIterable, Identifiable {
     }
 }
 
+private struct DeployRequest: Identifiable {
+    let id = UUID()
+    let host: HostRecord?
+    let keyID: String?
+    var step: KeyDeploymentWizard.Step = .chooseKey
+}
+
 private struct EditorRequest: Identifiable {
     let id = UUID()
     let mode: HostEditorMode
@@ -95,6 +102,7 @@ struct ContentView: View {
     @State private var metadata: [String: HostMetadata] = [:]
     @State private var recentEvents: [LaunchEvent] = []
     @State private var keyIndex = KeyIndexResult(keys: [], issues: [])
+    @State private var deployRequest: DeployRequest?
     @State private var scanTask: Task<Void, Never>?
     @State private var isScanning = true
     @State private var terminalService = TerminalLaunchService()
@@ -240,7 +248,8 @@ struct ContentView: View {
                                    onToggleFavorite: { toggleFavorite(host) },
                                    onLaunch: { terminal, mode in launch(host, terminal: terminal, mode: mode) },
                                    onCopyCommand: { copyCommand(host) },
-                                   onStopReuse: { stopReuse(host) })
+                                   onStopReuse: { stopReuse(host) },
+                                   onDeployKey: { deployRequest = DeployRequest(host: host, keyID: nil) })
                 } else {
                     ContentUnavailableView("选择一台主机", systemImage: "server.rack")
                 }
@@ -252,7 +261,7 @@ struct ContentView: View {
                 }
             case .keys:
                 if let key = keyIndex.keys.first(where: { $0.id == selectedKeyID }) {
-                    KeyDetailView(key: key) {
+                    KeyDetailView(key: key, onDeploy: { deployRequest = DeployRequest(host: nil, keyID: key.id) }) {
                         NSPasteboard.general.clearContents()
                         if let publicKey = key.publicKeyText {
                             NSPasteboard.general.setString(publicKey, forType: .string)
@@ -338,6 +347,18 @@ struct ContentView: View {
                            availableGroups: groups) { alias in
                 reload(selectAlias: alias)
             }
+        }
+        .sheet(item: $deployRequest) { request in
+            KeyDeploymentWizard(initialHost: request.host, initialKeyID: request.keyID, initialStep: request.step,
+                                hosts: scan.hosts, keys: keyIndex.keys, writer: writer, scan: scan,
+                                onGenerateKey: {
+                                    Task { @MainActor in
+                                        try? await Task.sleep(for: .milliseconds(300))
+                                        keyGenerationID = UUID()
+                                        showsKeyGeneration = true
+                                    }
+                                },
+                                onFinished: { alias in reload(selectAlias: alias) })
         }
         .sheet(isPresented: $showsGroupCreation) {
             GroupCreationView { name in
@@ -860,13 +881,24 @@ struct ContentView: View {
     /// Debug preview only: opens the editor for `CONFIGSSH_PREVIEW_EDIT_HOST` once scanning ends,
     /// so form screenshots can be taken from a `/tmp` fixture.
     private func openPreviewEditor() async {
-        guard ConfigSSHPaths.isPreviewMode,
-              let alias = ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_EDIT_HOST"] else { return }
+        guard ConfigSSHPaths.isPreviewMode else { return }
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["CONFIGSSH_PREVIEW_EDIT_HOST"] != nil || environment["CONFIGSSH_PREVIEW_DEPLOY_HOST"] != nil else { return }
         for _ in 0..<40 where isScanning {
             try? await Task.sleep(for: .milliseconds(250))
         }
-        if let host = scan.hosts.first(where: { $0.alias == alias }) {
+        if let alias = environment["CONFIGSSH_PREVIEW_EDIT_HOST"],
+           let host = scan.hosts.first(where: { $0.alias == alias }) {
             editorRequest = EditorRequest(mode: .edit(host))
+        }
+        if let alias = environment["CONFIGSSH_PREVIEW_DEPLOY_HOST"],
+           let host = scan.hosts.first(where: { $0.alias == alias }) {
+            let step: KeyDeploymentWizard.Step = switch environment["CONFIGSSH_PREVIEW_DEPLOY_STEP"] {
+            case "confirm": .confirm
+            case "deploy": .deploy
+            default: .chooseKey
+            }
+            deployRequest = DeployRequest(host: host, keyID: nil, step: step)
         }
     }
     #endif
@@ -999,6 +1031,7 @@ private struct HostDetailView: View {
     let onLaunch: (TerminalProfile, TerminalOpenMode) -> Void
     let onCopyCommand: () -> Void
     let onStopReuse: () -> Void
+    let onDeployKey: () -> Void
 
     private var selectedTerminal: TerminalProfile? {
         if let id = metadata?.preferredTerminal,
@@ -1071,6 +1104,9 @@ private struct HostDetailView: View {
                                           !TerminalLaunchPlanner.isSafeAlias(host.alias))
                             }
                         }
+                        Divider()
+                        Button("部署公钥…", action: onDeployKey)
+                            .disabled(!TerminalLaunchPlanner.isSafeAlias(host.alias))
                         if ConnectionReuse(host: host) != .off {
                             Divider()
                             Button("断开复用连接", action: onStopReuse)
@@ -1096,6 +1132,18 @@ private struct HostDetailView: View {
                     Text(selectedCapability?.explanation ?? "终端不可用")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                }
+
+                if host.option("IdentityFile") == nil && TerminalLaunchPlanner.isSafeAlias(host.alias) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "key")
+                            .foregroundStyle(.secondary)
+                        Text("使用密钥登录可免去每次输入密码。")
+                            .foregroundStyle(.secondary)
+                        Button("部署公钥…", action: onDeployKey)
+                            .buttonStyle(.link)
+                    }
+                    .font(.callout)
                 }
 
                 GroupBox("连接参数") {

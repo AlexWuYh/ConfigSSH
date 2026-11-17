@@ -134,8 +134,10 @@ final class KeyDeploymentTests: XCTestCase {
         XCTAssertEqual(KeyDeployment.deploymentArguments(alias: "web", key: key, options: options).first, "-f")
         XCTAssertFalse(KeyDeployment.deploymentArguments(alias: "web", key: key, options: options).contains("-s"),
                        "ssh-copy-id's SFTP mode is never used")
+        options.parentProcessID = 4242
         XCTAssertEqual(KeyDeployment.environment(for: options),
-                       ["PATH": "/usr/bin", "SSH_ASKPASS": "/x/configssh-askpass", "SSH_ASKPASS_REQUIRE": "force"])
+                       ["PATH": "/usr/bin", "SSH_ASKPASS": "/x/configssh-askpass", "SSH_ASKPASS_REQUIRE": "force",
+                        "CONFIGSSH_PARENT_PID": "4242"])
         XCTAssertNil(ProcessInfo.processInfo.environment["SSH_ASKPASS_REQUIRE"], "the test process itself is unchanged")
         XCTAssertEqual(KeyDeployment.deploy(alias: "-oProxyCommand=x", key: key, options: options), .failed("主机别名包含不支持的字符"))
     }
@@ -185,5 +187,32 @@ final class KeyDeploymentTests: XCTestCase {
                        "server-sent text is not mistaken for the client's own debug line")
         XCTAssertEqual(KeyDeployment.interpretLogin(.init(status: 143, stdout: "", stderr: "", wasCancelled: true, timedOut: false),
                                                     expectedFingerprint: "SHA256:NEW"), .cancelled)
+    }
+
+    func testTerminateAllStopsRunningGroups() throws {
+        let process = GroupProcess()
+        let finished = expectation(description: "process stopped")
+        DispatchQueue.global().async {
+            _ = try? process.run(executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"],
+                                 environment: [:], timeout: 20)
+            finished.fulfill()
+        }
+        for _ in 0..<40 where GroupProcess.activeGroupCount == 0 { usleep(50_000) }
+        XCTAssertGreaterThan(GroupProcess.activeGroupCount, 0)
+        GroupProcess.terminateAll()
+        wait(for: [finished], timeout: 5)
+        XCTAssertEqual(GroupProcess.activeGroupCount, 0)
+    }
+
+    func testAskpassParentWatchDetectsAGoneParent() throws {
+        let sleeper = Process()
+        sleeper.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try sleeper.run()
+        sleeper.waitUntilExit()
+        XCTAssertFalse(AskpassParentWatch.isAlive(sleeper.processIdentifier))
+        XCTAssertTrue(AskpassParentWatch.isAlive(getpid()))
+        XCTAssertEqual(AskpassParentWatch.parentPID(in: ["CONFIGSSH_PARENT_PID": "123"]), 123)
+        XCTAssertNil(AskpassParentWatch.parentPID(in: ["CONFIGSSH_PARENT_PID": "1"]))
+        XCTAssertNil(AskpassParentWatch.parentPID(in: [:]))
     }
 }
