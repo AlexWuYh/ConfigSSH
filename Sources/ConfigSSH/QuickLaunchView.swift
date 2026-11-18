@@ -30,12 +30,19 @@ struct QuickLaunchView: View {
     @State private var launcher = TerminalLaunchService()
     @State private var capabilities: [TerminalCapability] = []
     @State private var terminalProbeTask: Task<Void, Never>?
-    @State private var query = ""
+    @State private var query = Self.previewQuery
     @State private var selectedHostID: String?
     @State private var statusMessage: String?
     @FocusState private var searchFocused: Bool
     @AppStorage("defaultTerminal") private var defaultTerminalRaw = ""
     @AppStorage("defaultOpenMode") private var defaultOpenModeRaw = TerminalOpenMode.window.rawValue
+
+    private static var previewQuery: String {
+        #if DEBUG
+        if ConfigSSHPaths.isPreviewMode { return ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_QUERY"] ?? "" }
+        #endif
+        return ""
+    }
 
     private var effectiveSelectedID: String? {
         QuickLaunchSelection.resolvedID(selectedHostID, visibleIDs: results.map(\.id))
@@ -48,7 +55,7 @@ struct QuickLaunchView: View {
     private var results: [HostRecord] {
         let filtered = scan.hosts.filter { host in
             let details = metadata[host.metadataKey]
-            let fields = [host.alias, host.hostName ?? "", host.user ?? "",
+            let fields = [host.alias, host.hostName ?? "", host.user ?? "", host.configGroup ?? "",
                           details?.displayName ?? "", details?.groupName ?? ""] + (details?.tags ?? [])
             let terms = query.split(whereSeparator: \.isWhitespace)
             return terms.allSatisfy { term in
@@ -120,6 +127,13 @@ struct QuickLaunchView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
+                                    if let group = host.configGroup ?? metadata[host.metadataKey]?.groupName, !group.isEmpty {
+                                        Text(group)
+                                            .font(.caption)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(.quaternary, in: Capsule())
+                                    }
                                     Text(preferredTerminal(for: host)?.displayName ?? "未配置")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -138,11 +152,12 @@ struct QuickLaunchView: View {
                         }
                     }
                 }
-                .frame(maxHeight: style == .floatingPanel ? .infinity : 300)
+                .frame(minHeight: style == .embedded ? min(CGFloat(results.count), 5) * 54 : 0,
+                       maxHeight: style == .floatingPanel ? .infinity : 300)
             }
             if let host = selectedHost {
                 HStack {
-                    Text(style == .floatingPanel ? "↑↓ 选择 · ↵ 连接 · Esc 关闭" : "↵ 连接 · ⌘K 快速打开")
+                    Text("↑↓ 选择 · ↵ 连接 · Esc 关闭")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -158,6 +173,7 @@ struct QuickLaunchView: View {
                             .disabled(!capability.supportsTab)
                         }
                     }
+                    .fixedSize()
                     if !TerminalLaunchPlanner.isSafeAlias(host.alias) {
                         Button("复制 SSH 命令") {
                             NSPasteboard.general.clearContents()

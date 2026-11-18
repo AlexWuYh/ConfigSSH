@@ -150,6 +150,8 @@ final class GlobalShortcutManager {
                                            styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
             preview.titlebarAppearsTransparent = true
             preview.titleVisibility = .hidden
+            preview.backgroundColor = .clear
+            preview.isOpaque = false
             preview.title = "ConfigSSH · 快速连接"
             preview.hidesOnDeactivate = false
             return preview

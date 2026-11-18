@@ -10,7 +10,7 @@ Manage SSH Config Visually. Connect Effortlessly.
 
 </div>
 
-![ConfigSSH 的全部主机页面：左侧功能导航，中部按 Engineering 和 Personal 分组并高亮 api 主机，右侧展示 api 的 HostName、User、Port、IdentityFile、IdentitiesOnly、配置来源和分组](Assets/screenshots/hosts.png)
+![ConfigSSH 的全部主机页面：左侧功能导航，中部按 Engineering 和 Personal 分组并高亮 api 主机；右侧是 api 的详情：连接、其他方式和部署公钥按钮，HostName、User、Port、IdentityFile、IdentitiesOnly、ProxyJump、连接复用等连接参数，以及显示源文件原文的“配置原文”区块](Assets/screenshots/hosts.png)
 
 > [!NOTE]
 > ConfigSSH 目前是**预览版**：只能从源码构建，或使用未签名的预发布包。详见[已知限制](#已知限制)。
@@ -142,6 +142,19 @@ ConfigSSH 启动后会读取 `~/.ssh/config` 及其能访问的 `Include` 文件
 | **全局快捷键** | 在任何应用中按 `⌥⌘K`，屏幕上方弹出搜索框；再按一次或按 `Esc` 关闭 |
 | **菜单栏图标** | 点击顶部菜单栏的 ConfigSSH 图标，在下拉面板中搜索 |
 | **主窗口** | 在 ConfigSSH 中按 `⌘K` |
+
+<table>
+<tr>
+<td width="50%"><img src="Assets/screenshots/quick-connect-shortcut.png" alt="全局快捷键呼出的搜索框：输入 eng 后只列出 Engineering 分组的 api、db-primary、staging 三台主机，第一项高亮，右侧显示分组标签和默认终端 Ghostty，底部提示 ↑↓ 选择、↵ 连接、Esc 关闭"></td>
+<td width="50%"><img src="Assets/screenshots/quick-connect-menubar.png" alt="菜单栏图标下拉面板：未输入关键词时按最近连接列出 5 台示例主机，显示地址、分组标签和默认终端，右下角可选择其他终端"></td>
+</tr>
+<tr>
+<td align="center"><b>全局快捷键</b>：按 <code>⌥⌘K</code>，输入关键词筛选主机</td>
+<td align="center"><b>菜单栏图标</b>：点击后在下拉面板中搜索</td>
+</tr>
+</table>
+
+<sub>两张截图都来自用临时脱敏配置运行的真实应用。截图时为了能截取窗口，搜索面板用普通窗口承载，内容与实际弹出的面板相同；实际使用时搜索框浮在当前应用之上，菜单栏面板从顶部图标下方展开。</sub>
 
 在搜索框中：
 
