@@ -63,13 +63,18 @@ package struct GlobalShortcut: Equatable, Sendable {
 
     // MARK: Display
 
-    package var display: String {
-        var text = ""
-        if modifiers & Self.control != 0 { text += "⌃" }
-        if modifiers & Self.option != 0 { text += "⌥" }
-        if modifiers & Self.shift != 0 { text += "⇧" }
-        if modifiers & Self.command != 0 { text += "⌘" }
-        return text + (Self.keyNames[keyCode] ?? "?")
+    package var display: String { keyParts.joined() }
+
+    /// The shortcut as separate keys in macOS order, for drawing keycaps: each modifier is one
+    /// part and the main key is one part, so "Space" stays a single word instead of five letters.
+    package var keyParts: [String] {
+        var parts: [String] = []
+        if modifiers & Self.control != 0 { parts.append("⌃") }
+        if modifiers & Self.option != 0 { parts.append("⌥") }
+        if modifiers & Self.shift != 0 { parts.append("⇧") }
+        if modifiers & Self.command != 0 { parts.append("⌘") }
+        parts.append(Self.keyNames[keyCode] ?? "?")
+        return parts
     }
 
     // MARK: Validation

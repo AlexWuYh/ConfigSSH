@@ -145,7 +145,7 @@ ConfigSSH 启动后会读取 `~/.ssh/config` 及其能访问的 `Include` 文件
 
 <table>
 <tr>
-<td width="50%"><img src="Assets/screenshots/quick-connect-shortcut.png" alt="全局快捷键呼出的搜索框：输入 eng 后只列出 Engineering 分组的 api、db-primary、staging 三台主机，第一项高亮，右侧显示分组标签和默认终端 Ghostty，底部提示 ↑↓ 选择、↵ 连接、Esc 关闭"></td>
+<td width="50%"><img src="Assets/screenshots/quick-connect-shortcut.png" alt="全局快捷键呼出的搜索框：输入 eng 后只列出 Engineering 分组的主机，第一项高亮，匹配的关键词用主题色标出，底部写明“↵ 将用 Ghostty · 新窗口 默认终端”，并提示 ↑↓ 选择、↵ 连接、⌘↵ 新标签页、Esc 关闭"></td>
 <td width="50%"><img src="Assets/screenshots/quick-connect-menubar.png" alt="菜单栏图标下拉面板：未输入关键词时按最近连接列出 5 台示例主机，显示地址、分组标签和默认终端，右下角可选择其他终端"></td>
 </tr>
 <tr>
@@ -160,7 +160,7 @@ ConfigSSH 启动后会读取 `~/.ssh/config` 及其能访问的 `Include` 文件
 
 1. 输入别名、地址、用户名、显示名称、分组或标签的任意部分，多个关键词用空格分隔；
 2. 用 `↑` / `↓` 选择主机，未输入时按最近连接排序；
-3. 按 `↩`（或点击）用这台主机的默认终端连接，也可以点“选择终端”换一个终端或改用新标签页。
+3. 按 `↩`（或点击）连接。搜索框底部会一直写明 `↵` 将用哪个终端和打开方式（例如“Ghostty · 新窗口”），并标出它是默认终端还是这台主机单独设置的；点它可以换一个终端或改用新标签页，`⌘↵` 直接用新标签页。
 
 全局快捷键默认是 `⌥⌘K`，可以自己定：打开“设置 › 通用 › 快速连接”，点“更改…”后直接按下想用的组合键即可录入（按 `Esc` 取消），也可以从“常用组合”里挑，或关闭、恢复默认。
 

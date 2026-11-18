@@ -197,23 +197,35 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 BrandHeaderView()
                 Divider()
+                // The sidebar's own selection highlight follows the system accent colour, which an app
+                // cannot override, so the rows draw their own indigo highlight and the List's is hidden.
                 List(SidebarSection.allCases, selection: $section) { item in
+                    let isSelected = section == item
                     Label {
                         HStack {
                             Text(item.rawValue)
                             Spacer()
                             if item == .issues && !scan.issues.isEmpty {
                                 Text(scan.issues.count, format: .number)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(isSelected ? BrandPalette.accent : .secondary)
                             }
                         }
                     } icon: {
                         Image(systemName: item.symbol)
+                            .foregroundStyle(isSelected ? BrandPalette.accent : Color.secondary)
                     }
+                    .foregroundStyle(isSelected ? BrandPalette.accent : Color.primary)
+                    .fontWeight(isSelected ? .semibold : .regular)
                     .tag(item)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isSelected ? BrandPalette.accent.opacity(0.16) : Color.clear)
+                            .padding(.horizontal, 6)
+                    )
                     .accessibilityIdentifier("sidebar-\(item.id)")
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("ConfigSSH")
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)

@@ -2,22 +2,26 @@ import AppKit
 import ConfigSSHCore
 import SwiftUI
 
-/// Keycap-style display of a shortcut, e.g. ⌥ ⌘ K.
+/// Keycap-style display of a shortcut, e.g. ⌥ ⌘ K or ⌃ ⌥ Space: one cap per key, so a named key
+/// such as Space is a single wide cap.
 struct ShortcutKeycaps: View {
-    let text: String
+    let parts: [String]
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(text.enumerated()), id: \.offset) { _, character in
-                Text(String(character))
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                Text(part)
                     .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .lineLimit(1)
+                    .fixedSize()
                     .frame(minWidth: 24, minHeight: 24)
+                    .padding(.horizontal, part.count > 1 ? 7 : 0)
                     .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+        .accessibilityLabel(parts.joined(separator: " "))
     }
 }
 

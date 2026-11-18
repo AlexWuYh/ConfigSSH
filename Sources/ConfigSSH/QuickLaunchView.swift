@@ -221,12 +221,8 @@ struct QuickLaunchView: View {
     }
 
     private func footer(for host: HostRecord) -> some View {
-        HStack(spacing: 14) {
-            keyHint("↑↓", "选择")
-            keyHint("↵", "连接")
-            keyHint("⌘↵", "新标签页")
-            keyHint("esc", "关闭")
-            Spacer(minLength: 8)
+        VStack(spacing: 0) {
+            // Which terminal ↵ will open comes first and gets its own row, so it is never squeezed.
             Menu {
                 ForEach(capabilities) { capability in
                     Button("\(capability.profile.displayName) · 新窗口") {
@@ -247,19 +243,47 @@ struct QuickLaunchView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text("终端").foregroundStyle(.secondary)
-                    Text(preferredTerminal(for: host)?.displayName ?? "选择").foregroundStyle(BrandPalette.accent).fontWeight(.semibold)
-                }
-                .font(.system(size: 11.5))
+                terminalSummary(for: host)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .help("点击可改用其他终端或新标签页打开")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+            HStack(spacing: 14) {
+                keyHint("↑↓", "选择")
+                keyHint("↵", "连接")
+                keyHint("⌘↵", "新标签页")
+                keyHint("esc", "关闭")
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 5)
+            .padding(.bottom, 9)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
         .background(.primary.opacity(0.04))
         .overlay(alignment: .top) { Divider().opacity(0.5) }
+    }
+
+    /// "↵ 将用 Ghostty · 新窗口（默认终端）": the terminal and open mode that ↵ will use for this
+    /// host, marked when the host has its own setting instead of the default from 设置 › 终端.
+    /// One Text, because a borderless Menu label keeps only its first view.
+    private func terminalSummary(for host: HostRecord) -> some View {
+        let terminal = preferredTerminal(for: host)
+        let mode = preferredOpenMode(for: host)
+        let overridden = metadata[host.metadataKey]?.preferredTerminal != nil ||
+            metadata[host.metadataKey]?.preferredOpenMode != nil
+        var line = AttributedString("↵ 将用 ")
+        line.foregroundColor = .secondary
+        var name = AttributedString(terminal.map { "\($0.displayName) · \(mode.displayName)" } ?? "未配置终端")
+        name.foregroundColor = terminal == nil ? .orange : BrandPalette.accent
+        name.inlinePresentationIntent = .stronglyEmphasized
+        var note = AttributedString(overridden ? "  此主机单独设置" : "  默认终端")
+        note.foregroundColor = .secondary
+        return Text(line + name + note)
+            .font(.system(size: 11.5))
+            .lineLimit(1)
     }
 
     private func keyHint(_ key: String, _ label: String) -> some View {

@@ -274,7 +274,7 @@ struct SettingsView: View {
                     LabeledContent("全局快捷键") {
                         HStack(spacing: 10) {
                             if let shortcut = currentShortcut {
-                                ShortcutKeycaps(text: shortcut.display)
+                                ShortcutKeycaps(parts: shortcut.keyParts)
                             } else {
                                 Text("已关闭").foregroundStyle(.secondary)
                             }

@@ -11,6 +11,14 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertEqual(S(keyCode: 111, modifiers: S.control | S.shift | S.option | S.command).display, "⌃⌥⇧⌘F12")
     }
 
+    func testKeyPartsKeepNamedKeysWhole() {
+        XCTAssertEqual(S.default.keyParts, ["⌥", "⌘", "K"])
+        XCTAssertEqual(S(keyCode: 49, modifiers: S.control | S.option).keyParts, ["⌃", "⌥", "Space"],
+                       "Space is one part, not five letters")
+        XCTAssertEqual(S(keyCode: 111, modifiers: S.command).keyParts, ["⌘", "F12"])
+        XCTAssertEqual(S(keyCode: 49, modifiers: S.option).display, "⌥Space")
+    }
+
     func testStorageRoundTripAndLegacyNames() {
         let custom = S(keyCode: 38, modifiers: S.command | S.shift)
         XCTAssertEqual(S.parse(custom.storageValue), custom)
