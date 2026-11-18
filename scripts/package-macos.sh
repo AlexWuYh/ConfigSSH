@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bundle_id="${CONFIGSSH_BUNDLE_ID:-cn.wuewa.configssh}"
-app_version="${CONFIGSSH_VERSION:-0.1.0}"
+app_version="${CONFIGSSH_VERSION:-0.2.0}"
 app_output="${CONFIGSSH_APP_OUTPUT:-$repo_root/dist/ConfigSSH.app}"
 
 if [[ ! "$bundle_id" =~ ^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)+$ ]]; then
