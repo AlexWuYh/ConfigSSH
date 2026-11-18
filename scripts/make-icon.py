@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate the approved Open C macOS icon from the logo-design SVG masters.
 
-Requires Pillow, iconutil, and the installed logo-design skill renderer. Override
-CONFIGSSH_LOGO_RENDERER if the skill lives outside ~/.codex/skills/logo-design.
+Requires Pillow, iconutil, and the installed logo-design skill renderer. The renderer is looked up in
+~/.claude/skills/logo-design and ~/.codex/skills/logo-design; override with CONFIGSSH_LOGO_RENDERER.
 """
 
 from pathlib import Path
@@ -17,10 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "Assets" / "brand"
 ASSETS = ROOT / "Assets"
 RESOURCES = ROOT / "Sources" / "ConfigSSH" / "Resources"
-RENDERER = Path(os.environ.get(
-    "CONFIGSSH_LOGO_RENDERER",
-    Path.home() / ".codex/skills/logo-design/scripts/render_png.py",
-))
+_CANDIDATES = [Path.home() / ".claude/skills/logo-design/scripts/render_png.py",
+               Path.home() / ".codex/skills/logo-design/scripts/render_png.py"]
+RENDERER = Path(os.environ.get("CONFIGSSH_LOGO_RENDERER") or next((c for c in _CANDIDATES if c.is_file()), _CANDIDATES[0]))
 
 
 def render(svg: Path, png: Path, size: int) -> None:
@@ -34,16 +33,19 @@ def main() -> None:
     ASSETS.mkdir(exist_ok=True)
     RESOURCES.mkdir(exist_ok=True)
     app_svg = BRAND / "ConfigSSH-app-icon.svg"
-    symbol_svg = BRAND / "ConfigSSH-black.svg"
-    for source in (app_svg, symbol_svg):
+    menu_svg = BRAND / "ConfigSSH-menu.svg"
+    for source in (app_svg, menu_svg):
         if not source.is_file():
             raise SystemExit(f"Missing approved SVG master: {source}")
 
     icon_png = ASSETS / "ConfigSSH-1024.png"
     render(app_svg, icon_png, 1024)
-    render(symbol_svg, RESOURCES / "ConfigSSH-Menu.png", 64)
+    render(menu_svg, RESOURCES / "ConfigSSH-Menu.png", 64)
     icon = Image.open(icon_png).convert("RGBA")
-    icon.resize((256, 256), Image.Resampling.LANCZOS).save(RESOURCES / "ConfigSSH-Mark.png")
+    # The app icon has the standard transparent margin; the in-app mark is cropped to the tile so
+    # it keeps filling its frame in the sidebar and About page.
+    tile = icon.crop(icon.getchannel("A").getbbox())
+    tile.resize((256, 256), Image.Resampling.LANCZOS).save(RESOURCES / "ConfigSSH-Mark.png")
 
     with tempfile.TemporaryDirectory(prefix="configssh-icon-") as temporary:
         iconset = Path(temporary) / "ConfigSSH.iconset"

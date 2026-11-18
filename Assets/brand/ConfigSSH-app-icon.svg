@@ -1,6 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>ConfigSSH</title><rect width="256" height="256" rx="57.6" fill="#2B65AB"/><g transform="translate(12.29 8.45) scale(0.904)" fill="#F7FAFF">
-  <title id="title">ConfigSSH concept B — open C with endpoint</title>
-  <path fill="#F7FAFF" d="M198 36H98C60 36 36 60 36 98V158C36 196 60 220 98 220H198V184H102C82 184 72 174 72 154V102C72 82 82 72 102 72H198V36Z"/>
-  <path fill="#F7FAFF" d="M80 111H147C157 111 165 119 165 129C165 139 157 147 147 147H80V111Z"/>
-  <circle fill="#F7FAFF" cx="200" cy="129" r="20"/>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img"><title>ConfigSSH</title><defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="88" y1="30" x2="168" y2="226"><stop offset="0" stop-color="#7482FF"/><stop offset="0.48" stop-color="#5B6CF0"/><stop offset="1" stop-color="#4A59D8"/></linearGradient><linearGradient id="h" gradientUnits="userSpaceOnUse" x1="0" y1="25" x2="0" y2="110"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient></defs>
+  <rect x="25" y="25" width="206" height="206" rx="46" fill="url(#g)"/>
+  <rect x="25" y="25" width="206" height="206" rx="46" fill="url(#h)"/>
+  <g transform="translate(12.60 12.60) scale(0.9016)">
+    <path d="M188.1 84.3A68 68 0 1 0 188.1 171.7" fill="none" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round"/>
+    <path d="M120 98L156 128L120 158" fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
