@@ -3,12 +3,56 @@ import AppKit
 import SwiftUI
 
 enum BrandPalette {
-    static let selectionBlue = Color(red: 104 / 255, green: 151 / 255, blue: 208 / 255)
-    static let deepBlue = Color(red: 43 / 255, green: 101 / 255, blue: 171 / 255)
-    static let lightBlue = Color(red: 145 / 255, green: 190 / 255, blue: 243 / 255)
+    /// Indigo: #5B6CF0 on light backgrounds, #8E9BFF on dark ones, #4C5BD6 for pressed/hover.
+    static let indigo = Color(red: 0x5B / 255, green: 0x6C / 255, blue: 0xF0 / 255)
+    static let indigoStrong = Color(red: 0x4C / 255, green: 0x5B / 255, blue: 0xD6 / 255)
+    static let indigoLight = Color(red: 0x8E / 255, green: 0x9B / 255, blue: 0xFF / 255)
+
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
+
+    /// Follows the window's appearance, so it can be used anywhere without a ColorScheme.
+    static let accent = adaptive(light: NSColor(srgbRed: 0x5B / 255, green: 0x6C / 255, blue: 0xF0 / 255, alpha: 1),
+                                 dark: NSColor(srgbRed: 0x8E / 255, green: 0x9B / 255, blue: 0xFF / 255, alpha: 1))
+    static let accentStrong = adaptive(light: NSColor(srgbRed: 0x4C / 255, green: 0x5B / 255, blue: 0xD6 / 255, alpha: 1),
+                                       dark: NSColor(srgbRed: 0x7A / 255, green: 0x88 / 255, blue: 0xF2 / 255, alpha: 1))
+    /// Text and icons drawn on an accent-filled surface: white on light indigo, near-black on the pale dark-mode indigo.
+    static let onAccent = adaptive(light: .white, dark: NSColor(srgbRed: 0x0E / 255, green: 0x14 / 255, blue: 0x20 / 255, alpha: 1))
 
     static func accent(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? lightBlue : deepBlue
+        scheme == .dark ? indigoLight : indigo
+    }
+}
+
+/// The appearance chosen in 设置 › 外观. Windows that SwiftUI scenes do not own (the floating
+/// quick-connect panel) read it here so they follow the same choice as the main window.
+enum AppAppearance {
+    static var rawValue: String {
+        #if DEBUG
+        if ConfigSSHPaths.isPreviewMode, let preview = ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_APPEARANCE"] {
+            return preview
+        }
+        #endif
+        return UserDefaults.standard.string(forKey: "appearance") ?? "system"
+    }
+
+    static var colorScheme: ColorScheme? {
+        switch rawValue {
+        case "light": .light
+        case "dark": .dark
+        default: nil
+        }
+    }
+
+    static var nsAppearance: NSAppearance? {
+        switch rawValue {
+        case "light": NSAppearance(named: .aqua)
+        case "dark": NSAppearance(named: .darkAqua)
+        default: nil
+        }
     }
 }
 
@@ -159,7 +203,7 @@ struct AboutConfigSSHView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("发现新版本 \(release.tag)\(release.isPrerelease ? "（预发布）" : "")",
                       systemImage: "arrow.down.circle.fill")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(BrandPalette.accent)
                     .font(.callout.bold())
                 Link("在 GitHub 查看并下载", destination: release.pageURL)
                     .font(.callout)

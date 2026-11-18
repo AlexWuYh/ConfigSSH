@@ -24,7 +24,8 @@ struct SettingsView: View {
     @State private var isIndexingSnapshotKeys = false
     @State private var snapshotKeyIndexTask: Task<Void, Never>?
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage(GlobalShortcutChoice.defaultsKey) private var globalShortcut = GlobalShortcutChoice.default.rawValue
+    @AppStorage(GlobalShortcutSettings.defaultsKey) private var globalShortcut = GlobalShortcut.default.storageValue
+    @State private var shortcutRecorder = ShortcutRecorderModel()
     @State private var iCloudDriveAvailable = true
     @State private var launchService = TerminalLaunchService()
     @State private var profiles: [TerminalProfile] = []
@@ -51,6 +52,8 @@ struct SettingsView: View {
             ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "backup" { return 1 }
         if ConfigSSHPaths.isPreviewMode &&
             ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "about" { return 3 }
+        if ConfigSSHPaths.isPreviewMode &&
+            ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "general" { return 2 }
         #endif
         return 0
     }
@@ -268,25 +271,60 @@ struct SettingsView: View {
                 }
                 }
                 Section("快速连接") {
-                    Picker("全局快捷键", selection: $globalShortcut) {
-                        ForEach(GlobalShortcutChoice.allCases) { choice in
-                            Text(choice.title).tag(choice.rawValue)
+                    LabeledContent("全局快捷键") {
+                        HStack(spacing: 10) {
+                            if let shortcut = currentShortcut {
+                                ShortcutKeycaps(text: shortcut.display)
+                            } else {
+                                Text("已关闭").foregroundStyle(.secondary)
+                            }
+                            Button(shortcutRecorder.isRecording ? "请按下新的组合键…" : "更改…") {
+                                if shortcutRecorder.isRecording { shortcutRecorder.stop(restore: true) }
+                                else {
+                                    shortcutRecorder.start { recorded in globalShortcut = recorded.storageValue }
+                                }
+                            }
+                            .accessibilityIdentifier("shortcutRecordButton")
+                            Menu("常用组合") {
+                                ForEach(GlobalShortcut.presets, id: \.storageValue) { preset in
+                                    Button(preset.display + (preset == .default ? "（默认）" : "")) {
+                                        globalShortcut = preset.storageValue
+                                    }
+                                }
+                                Divider()
+                                Button("关闭全局快捷键") { globalShortcut = GlobalShortcut.offValue }
+                            }
+                            .fixedSize()
                         }
                     }
-                    if let choice = GlobalShortcutChoice(rawValue: globalShortcut), let note = choice.conflictNote {
+                    if shortcutRecorder.isRecording {
+                        Label("按下想用的组合键（需包含 ⌘、⌃、⌥ 之一），按 Esc 取消。", systemImage: "keyboard")
+                            .font(.callout)
+                            .foregroundStyle(BrandPalette.accent)
+                    }
+                    if let message = shortcutRecorder.message {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                    }
+                    if let note = currentShortcut?.cautionNote {
                         Label(note, systemImage: "exclamationmark.triangle")
                             .font(.callout)
                             .foregroundStyle(.orange)
                     }
-                    if globalShortcut != GlobalShortcutChoice.off.rawValue,
-                       globalShortcut != GlobalShortcutManager.shared.activeRawValue {
-                        Label("所选快捷键当前未生效（可能已被其他应用占用），请选择另一组合。",
+                    if let shortcut = currentShortcut, shortcut != GlobalShortcutManager.shared.activeShortcut,
+                       !shortcutRecorder.isRecording {
+                        Label("这个快捷键当前未生效（可能已被其他应用占用），请换一个组合。",
                               systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                     }
-                    Button("立即试用") { GlobalShortcutManager.shared.showPanel() }
-                        .disabled(globalShortcut == GlobalShortcutChoice.off.rawValue)
-                    Text("在任何应用中按全局快捷键，屏幕上方会弹出主机搜索框：输入关键词，用 ↑↓ 选择，回车即用默认终端连接；Esc 或再次按快捷键关闭。也可以点击菜单栏图标搜索；主窗口内按 ⌘K。快捷键只在 ConfigSSH 运行时有效，建议同时开启“登录时启动”。")
+                    HStack {
+                        Button("立即试用") { GlobalShortcutManager.shared.showPanel() }
+                            .disabled(currentShortcut == nil)
+                        Button("恢复默认（\(GlobalShortcut.default.display)）") { globalShortcut = GlobalShortcut.default.storageValue }
+                            .disabled(currentShortcut == .default)
+                    }
+                    Text("在任何应用中按全局快捷键，屏幕上方会弹出主机搜索框：输入关键词，用 ↑↓ 选择，回车即用默认终端连接，⌘↵ 用新标签页；Esc 或再次按快捷键关闭。也可以点击菜单栏图标搜索；主窗口内按 ⌘K。快捷键只在 ConfigSSH 运行时有效，建议同时开启“登录时启动”。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -381,11 +419,13 @@ struct SettingsView: View {
             }
         }
         .onChange(of: globalShortcut) { previous, current in
-            if !GlobalShortcutManager.shared.apply(current) {
+            if !GlobalShortcutManager.shared.apply(GlobalShortcut.resolved(current)) {
                 globalShortcut = previous
-                settingsError = "快捷键已被其他应用占用，请选择另一组合。"
+                _ = GlobalShortcutManager.shared.apply(GlobalShortcut.resolved(previous))
+                settingsError = "这个快捷键已被其他应用占用，请换一个组合。"
             }
         }
+        .onDisappear { if shortcutRecorder.isRecording { shortcutRecorder.stop(restore: true) } }
         .alert("操作未完成", isPresented: Binding(
             get: { settingsError != nil },
             set: { if !$0 { settingsError = nil } }
@@ -438,6 +478,8 @@ struct SettingsView: View {
     }
 
     private var localSnapshotFolder: URL { ConfigSSHPaths.localSnapshotFolder }
+
+    private var currentShortcut: GlobalShortcut? { GlobalShortcut.resolved(globalShortcut) }
 
     private func chooseICloudFolder() {
         let panel = NSOpenPanel()

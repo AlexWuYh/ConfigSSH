@@ -168,7 +168,7 @@ struct SnapshotBrowserView: View {
                 .padding(.horizontal, 9)
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(selectedID == snapshot.id ? BrandPalette.selectionBlue.opacity(0.28) : .clear,
+                .background(selectedID == snapshot.id ? BrandPalette.accent.opacity(0.28) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }

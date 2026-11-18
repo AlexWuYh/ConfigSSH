@@ -107,7 +107,7 @@ struct KeyDeploymentWizard: View {
                 HStack(spacing: 6) {
                     Image(systemName: item.rawValue < step.rawValue ? "checkmark.circle.fill"
                           : item == step ? "\(item.rawValue + 1).circle.fill" : "\(item.rawValue + 1).circle")
-                        .foregroundStyle(item.rawValue <= step.rawValue ? Color.accentColor : Color.secondary)
+                        .foregroundStyle(item.rawValue <= step.rawValue ? BrandPalette.accent : Color.secondary)
                     Text(item.title)
                         .font(.callout)
                         .foregroundStyle(item == step ? .primary : .secondary)
@@ -447,7 +447,7 @@ private struct TargetHostPicker: View {
                 Spacer()
                 if let selected = hosts.first(where: { $0.id == selection }) {
                     Label(selected.alias, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(BrandPalette.accent)
                         .font(.callout)
                 }
             }
@@ -462,7 +462,7 @@ private struct TargetHostPicker: View {
                     ForEach(filtered) { host in
                         HStack(spacing: 10) {
                             Image(systemName: host.id == selection ? "largecircle.fill.circle" : "circle")
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(BrandPalette.accent)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(host.alias).font(.body.weight(.medium))
                                 Text([host.user.map { "\($0)@" }, host.hostName].compactMap { $0 }.joined())
@@ -485,7 +485,7 @@ private struct TargetHostPicker: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(host.id == selection ? Color.accentColor.opacity(0.12) : Color.clear,
+                        .background(host.id == selection ? BrandPalette.accent.opacity(0.12) : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                         .onTapGesture { selection = host.id }
@@ -510,7 +510,7 @@ private struct KeyChoiceRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(record.isDeployable ? Color.accentColor : Color.secondary)
+                .foregroundStyle(record.isDeployable ? BrandPalette.accent : Color.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.name).font(.body.weight(.medium))
                 Text("\(record.type) · \(record.fingerprint ?? "无指纹")")
@@ -527,7 +527,7 @@ private struct KeyChoiceRow: View {
             Spacer()
         }
         .padding(10)
-        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+        .background(isSelected ? BrandPalette.accent.opacity(0.12) : Color.clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .opacity(record.isDeployable ? 1 : 0.55)
     }

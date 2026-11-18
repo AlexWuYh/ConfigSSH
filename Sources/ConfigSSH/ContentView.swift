@@ -581,7 +581,7 @@ struct ContentView: View {
                                         .frame(width: 12)
                                         .foregroundStyle(.secondary)
                                     Image(systemName: "folder")
-                                        .foregroundStyle(.tint)
+                                        .foregroundStyle(BrandPalette.accent)
                                     Text("\(groupName) · \(members.count)")
                                         .font(.headline)
                                     Spacer()
@@ -636,7 +636,7 @@ struct ContentView: View {
                                             .padding(.vertical, 4)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .background(selectedID == host.id
-                                                        ? BrandPalette.selectionBlue.opacity(colorContrast == .increased ? 0.42 : 0.28)
+                                                        ? BrandPalette.accent.opacity(colorContrast == .increased ? 0.42 : 0.28)
                                                         : .clear,
                                                         in: RoundedRectangle(cornerRadius: 9))
                                             .overlay {
@@ -1211,30 +1211,34 @@ private struct DeployKeyCallout: View {
     let onDeployKey: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
+        // The button sits under the text instead of beside it: the detail pane can be under 400 pt
+        // wide at the default window size, and a side-by-side layout squeezed both.
+        HStack(alignment: .top, spacing: 14) {
             Image(systemName: "key.horizontal.fill")
                 .font(.title2)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(BrandPalette.accent)
                 .frame(width: 40, height: 40)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 3) {
+                .background(BrandPalette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 8) {
                 Text("改用密钥登录，连接时不再输入密码")
                     .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text("输入一次服务器密码，把本机公钥安装到服务器，验证成功后自动更新此主机配置。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Button(action: onDeployKey) {
+                    Label("部署公钥…", systemImage: "arrow.up.doc")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("hostDeployKeyCalloutButton")
             }
-            Spacer(minLength: 8)
-            Button(action: onDeployKey) {
-                Label("部署公钥…", systemImage: "arrow.up.doc")
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("hostDeployKeyCalloutButton")
+            Spacer(minLength: 0)
         }
         .padding(14)
-        .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor.opacity(0.25)))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BrandPalette.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BrandPalette.accent.opacity(0.28)))
     }
 }
 
