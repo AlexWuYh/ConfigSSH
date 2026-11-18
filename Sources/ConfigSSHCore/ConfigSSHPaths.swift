@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 package enum ConfigSSHPaths {
@@ -21,7 +22,7 @@ package enum ConfigSSHPaths {
             .appendingPathComponent("Library/Application Support/ConfigSSH/metadata.sqlite")
     }
 
-    private static var previewRootURL: URL? {
+    fileprivate static var previewRootURL: URL? {
         #if DEBUG
         guard let raw = ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_ROOT"],
               raw.hasPrefix("/"), !raw.contains("..") else { return nil }
@@ -36,5 +37,25 @@ package enum ConfigSSHPaths {
         #else
         return nil
         #endif
+    }
+}
+
+extension ConfigSSHPaths {
+    /// Local snapshot folder; in Debug preview mode it sits next to the `/tmp` fixture.
+    package static var localSnapshotFolder: URL {
+        #if DEBUG
+        if let previewRootURL {
+            // Snapshot folders refuse symlinked components and /tmp → /private/tmp is one; realpath
+            // keeps the /private prefix, unlike Foundation's resolvingSymlinksInPath.
+            let fixture = previewRootURL.deletingLastPathComponent().deletingLastPathComponent()
+            let resolved = realpath(fixture.path, nil).map { pointer -> String in
+                defer { free(pointer) }
+                return String(cString: pointer)
+            } ?? fixture.path
+            return URL(fileURLWithPath: resolved).appendingPathComponent("Snapshots")
+        }
+        #endif
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/ConfigSSH/Snapshots")
     }
 }

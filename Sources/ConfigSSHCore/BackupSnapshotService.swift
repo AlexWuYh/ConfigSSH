@@ -7,7 +7,9 @@ package enum SnapshotDestination: Sendable {
 
     package var folderURL: URL {
         switch self {
-        case .local(let folder), .iCloudDrive(let folder, _): folder.standardizedFileURL
+        // Not `standardizedFileURL`: for an existing directory under /private it strips the
+        // prefix (yielding /var/...), and the symlink check below then rejects the path.
+        case .local(let folder), .iCloudDrive(let folder, _): URL(fileURLWithPath: folder.path).absoluteURL
         }
     }
 }
@@ -24,6 +26,15 @@ package struct SnapshotManifest: Codable, Sendable {
     package let createdAt: Date
     package let includesKeys: Bool
     package let entries: [Entry]
+    /// Set by scheduled snapshots; nil in manual and older snapshots.
+    package var isAutomatic: Bool?
+
+    package init(createdAt: Date, includesKeys: Bool, entries: [Entry], isAutomatic: Bool? = nil) {
+        self.createdAt = createdAt
+        self.includesKeys = includesKeys
+        self.entries = entries
+        self.isAutomatic = isAutomatic
+    }
 }
 
 package struct SnapshotResult: Sendable {
@@ -52,7 +63,11 @@ package struct BackupSnapshotService {
     package func create(scan: ConfigScan, destination: SnapshotDestination,
                         includeKeys: Bool = false,
                         selectedKeyIDs: Set<String>? = nil,
+                        automatic: Bool = false,
                         afterKeyCopy: ((URL) throws -> Void)? = nil) throws -> SnapshotResult {
+        guard !(automatic && includeKeys) else {
+            throw ConfigEditError.unsafe("自动快照不能包含密钥")
+        }
         guard scan.availability == .available, !scan.sources.isEmpty else {
             throw ConfigEditError.invalid("没有可备份的 SSH 配置文件")
         }
@@ -63,7 +78,7 @@ package struct BackupSnapshotService {
         try SafeFileIO.ensureDirectory(folder)
 
         let stamp = Int(Date().timeIntervalSince1970)
-        let name = "ConfigSSH-\(stamp)-\(UUID().uuidString.prefix(8).lowercased())"
+        let name = "ConfigSSH-\(automatic ? "auto-" : "")\(stamp)-\(UUID().uuidString.prefix(8).lowercased())"
         let staging = folder.appendingPathComponent(".\(name).tmp")
         let final = folder.appendingPathComponent(name)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false,
@@ -158,7 +173,8 @@ package struct BackupSnapshotService {
             }
         }
 
-        let manifest = SnapshotManifest(createdAt: Date(), includesKeys: includeKeys, entries: entries)
+        let manifest = SnapshotManifest(createdAt: Date(), includesKeys: includeKeys, entries: entries,
+                                        isAutomatic: automatic ? true : nil)
         let manifestURL = staging.appendingPathComponent("manifest.json")
         try JSONEncoder().encode(manifest).write(to: manifestURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifestURL.path)

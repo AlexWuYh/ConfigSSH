@@ -197,23 +197,35 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 BrandHeaderView()
                 Divider()
+                // The sidebar's own selection highlight follows the system accent colour, which an app
+                // cannot override, so the rows draw their own indigo highlight and the List's is hidden.
                 List(SidebarSection.allCases, selection: $section) { item in
+                    let isSelected = section == item
                     Label {
                         HStack {
                             Text(item.rawValue)
                             Spacer()
                             if item == .issues && !scan.issues.isEmpty {
                                 Text(scan.issues.count, format: .number)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(isSelected ? BrandPalette.accent : .secondary)
                             }
                         }
                     } icon: {
                         Image(systemName: item.symbol)
+                            .foregroundStyle(isSelected ? BrandPalette.accent : Color.secondary)
                     }
+                    .foregroundStyle(isSelected ? BrandPalette.accent : Color.primary)
+                    .fontWeight(isSelected ? .semibold : .regular)
                     .tag(item)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isSelected ? BrandPalette.accent.opacity(0.16) : Color.clear)
+                            .padding(.horizontal, 6)
+                    )
                     .accessibilityIdentifier("sidebar-\(item.id)")
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("ConfigSSH")
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)
@@ -237,6 +249,7 @@ struct ContentView: View {
             case .hosts, .favorites, .recent:
                 if let host = selectedHostForDetail {
                     HostDetailView(host: host,
+                                   sourceText: scan.sourceText(for: host),
                                    metadata: metadata[host.metadataKey],
                                    defaultTerminal: TerminalSelection.resolved(defaultTerminalRaw, from: terminalCapabilities),
                                    defaultOpenMode: metadata[host.metadataKey]?.preferredOpenMode.map(TerminalOpenMode.resolved(_:))
@@ -474,7 +487,12 @@ struct ContentView: View {
             loadBackups()
             loadMetadata()
             loadPendingGroupOperations()
+            #if DEBUG
+            reload(selectAlias: ConfigSSHPaths.isPreviewMode
+                ? ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SELECT_HOST"] : nil)
+            #else
             reload()
+            #endif
         }
         .onDisappear {
             scanTask?.cancel()
@@ -575,7 +593,7 @@ struct ContentView: View {
                                         .frame(width: 12)
                                         .foregroundStyle(.secondary)
                                     Image(systemName: "folder")
-                                        .foregroundStyle(.tint)
+                                        .foregroundStyle(BrandPalette.accent)
                                     Text("\(groupName) · \(members.count)")
                                         .font(.headline)
                                     Spacer()
@@ -630,7 +648,7 @@ struct ContentView: View {
                                             .padding(.vertical, 4)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .background(selectedID == host.id
-                                                        ? BrandPalette.selectionBlue.opacity(colorContrast == .increased ? 0.42 : 0.28)
+                                                        ? BrandPalette.accent.opacity(colorContrast == .increased ? 0.42 : 0.28)
                                                         : .clear,
                                                         in: RoundedRectangle(cornerRadius: 9))
                                             .overlay {
@@ -883,7 +901,8 @@ struct ContentView: View {
     private func openPreviewEditor() async {
         guard ConfigSSHPaths.isPreviewMode else { return }
         let environment = ProcessInfo.processInfo.environment
-        guard environment["CONFIGSSH_PREVIEW_EDIT_HOST"] != nil || environment["CONFIGSSH_PREVIEW_DEPLOY_HOST"] != nil else { return }
+        guard environment["CONFIGSSH_PREVIEW_EDIT_HOST"] != nil || environment["CONFIGSSH_PREVIEW_DEPLOY_HOST"] != nil ||
+              environment["CONFIGSSH_PREVIEW_DEPLOY_FROM_KEYS"] != nil else { return }
         for _ in 0..<40 where isScanning {
             try? await Task.sleep(for: .milliseconds(250))
         }
@@ -899,6 +918,9 @@ struct ContentView: View {
             default: .chooseKey
             }
             deployRequest = DeployRequest(host: host, keyID: nil, step: step)
+        }
+        if environment["CONFIGSSH_PREVIEW_DEPLOY_FROM_KEYS"] == "1", let key = keyIndex.keys.first {
+            deployRequest = DeployRequest(host: nil, keyID: key.id)
         }
     }
     #endif
@@ -1020,6 +1042,7 @@ private struct HostRowView: View {
 
 private struct HostDetailView: View {
     let host: HostRecord
+    let sourceText: String?
     let metadata: HostMetadata?
     let defaultTerminal: TerminalProfile?
     let defaultOpenMode: TerminalOpenMode
@@ -1104,9 +1127,6 @@ private struct HostDetailView: View {
                                           !TerminalLaunchPlanner.isSafeAlias(host.alias))
                             }
                         }
-                        Divider()
-                        Button("部署公钥…", action: onDeployKey)
-                            .disabled(!TerminalLaunchPlanner.isSafeAlias(host.alias))
                         if ConnectionReuse(host: host) != .off {
                             Divider()
                             Button("断开复用连接", action: onStopReuse)
@@ -1114,6 +1134,12 @@ private struct HostDetailView: View {
                         }
                     }
                     .fixedSize()
+                    Button(action: onDeployKey) {
+                        Label("部署公钥", systemImage: "key.horizontal")
+                    }
+                    .help("把本机公钥安装到这台服务器，改用密钥登录")
+                    .disabled(!TerminalLaunchPlanner.isSafeAlias(host.alias))
+                    .accessibilityIdentifier("hostDeployKeyButton")
                     Spacer(minLength: 0)
                     Button(action: onCopyCommand) {
                         Image(systemName: "doc.on.doc")
@@ -1135,15 +1161,7 @@ private struct HostDetailView: View {
                 }
 
                 if host.option("IdentityFile") == nil && TerminalLaunchPlanner.isSafeAlias(host.alias) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "key")
-                            .foregroundStyle(.secondary)
-                        Text("使用密钥登录可免去每次输入密码。")
-                            .foregroundStyle(.secondary)
-                        Button("部署公钥…", action: onDeployKey)
-                            .buttonStyle(.link)
-                    }
-                    .font(.callout)
+                    DeployKeyCallout(onDeployKey: onDeployKey)
                 }
 
                 GroupBox("连接参数") {
@@ -1160,16 +1178,7 @@ private struct HostDetailView: View {
                     .padding(4)
                 }
 
-                GroupBox("配置来源") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(host.sourceURL.path)
-                            .textSelection(.enabled)
-                        Text("第 \(host.sourceLine) 行")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(4)
-                }
+                HostSourceTextView(host: host, text: sourceText)
 
                 if let metadata {
                     GroupBox("主机信息") {
@@ -1201,22 +1210,97 @@ private struct HostDetailView: View {
                     }
                 }
 
-                if !host.explicitOptions.isEmpty {
-                    GroupBox("原始字段") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(host.explicitOptions, id: \.line) { option in
-                                DetailField(label: option.keyword, value: option.rawValue)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(4)
-                    }
-                }
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(host.alias)
+    }
+}
+
+/// Shown on hosts without an IdentityFile: the deploy-key wizard is the next useful step there.
+private struct DeployKeyCallout: View {
+    let onDeployKey: () -> Void
+
+    var body: some View {
+        // The button sits under the text instead of beside it: the detail pane can be under 400 pt
+        // wide at the default window size, and a side-by-side layout squeezed both.
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "key.horizontal.fill")
+                .font(.title2)
+                .foregroundStyle(BrandPalette.accent)
+                .frame(width: 40, height: 40)
+                .background(BrandPalette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 8) {
+                Text("改用密钥登录，连接时不再输入密码")
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("输入一次服务器密码，把本机公钥安装到服务器，验证成功后自动更新此主机配置。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: onDeployKey) {
+                    Label("部署公钥…", systemImage: "arrow.up.doc")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("hostDeployKeyCalloutButton")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BrandPalette.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BrandPalette.accent.opacity(0.28)))
+    }
+}
+
+/// The host block exactly as it appears in the file, so users see the real text.
+private struct HostSourceTextView: View {
+    let host: HostRecord
+    let text: String?
+    @State private var copied = false
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(host.sourceURL.path) · 第 \(host.sourceLine) 行起")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                    Spacer()
+                    if let text {
+                        Button(copied ? "已复制" : "复制") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(text, forType: .string)
+                            copied = true
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
+                }
+                if let text {
+                    ScrollView(.horizontal) {
+                        Text(verbatim: text)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(12)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                } else {
+                    Text("无法读取此 Host 在源文件中的原文。")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(4)
+        } label: {
+            Text("配置原文")
+        }
+        .onChange(of: host.id) { _, _ in copied = false }
     }
 }
 

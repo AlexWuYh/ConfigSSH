@@ -192,13 +192,13 @@ struct CloudSyncView: View {
                                                 Spacer()
                                                 if selectedSlotID == slot.id {
                                                     Image(systemName: "checkmark.circle.fill")
-                                                        .foregroundStyle(.tint)
+                                                        .foregroundStyle(BrandPalette.accent)
                                                 }
                                             }
                                             .padding(10)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .background(selectedSlotID == slot.id
-                                                        ? BrandPalette.selectionBlue.opacity(0.20) : .clear,
+                                                        ? BrandPalette.accent.opacity(0.20) : .clear,
                                                         in: RoundedRectangle(cornerRadius: 8))
                                             .contentShape(Rectangle())
                                         }

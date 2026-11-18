@@ -70,7 +70,7 @@ package struct HostRecord: Identifiable, Sendable {
         let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
         let searchable = [alias] + explicitOptions
             .filter { ["hostname", "user"].contains($0.keyword.lowercased()) }
-            .flatMap(\.arguments)
+            .flatMap(\.arguments) + [configGroup].compactMap { $0 }
         return terms.allSatisfy { term in
             searchable.contains { $0.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
         }
@@ -123,5 +123,22 @@ package struct ConfigScan: Sendable {
         self.rules = rules
         self.issues = issues
         self.sources = sources
+    }
+}
+
+extension ConfigScan {
+    /// The host block exactly as written in its source file: from the `Host` line through the
+    /// block's last option line, including comments, indentation and blank lines in between, but
+    /// not trailing blank lines or the next block's leading comments. Line endings are normalised
+    /// to `\n` for display only.
+    package func sourceText(for host: HostRecord) -> String? {
+        guard let source = sources.first(where: { $0.url == host.sourceURL }) else { return nil }
+        let lines = String(decoding: source.data, as: UTF8.self)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+        let first = host.sourceLine
+        let last = max(first, host.explicitOptions.map(\.line).max() ?? first)
+        guard first >= 1, last <= lines.count else { return nil }
+        return lines[(first - 1)...(last - 1)].joined(separator: "\n")
     }
 }

@@ -15,13 +15,17 @@ struct SettingsView: View {
     @AppStorage("defaultOpenMode") private var defaultOpenModeRaw = TerminalOpenMode.window.rawValue
     @AppStorage("backupLimit") private var backupLimit = 50
     @AppStorage("snapshotICloudFolder") private var snapshotICloudFolder = ""
+    @AppStorage(AutoSnapshotScheduler.intervalKey) private var autoSnapshotInterval = AutoSnapshotInterval.daily.rawValue
+    @AppStorage(AutoSnapshotScheduler.keepKey) private var autoSnapshotKeep = AutoSnapshotService.defaultKeep
+    @AppStorage(AutoSnapshotScheduler.lastResultKey) private var autoSnapshotLastResult = ""
     @State private var snapshotIncludeKeys = false
     @State private var snapshotKeys: [PublicKeyRecord] = []
     @State private var selectedSnapshotKeyIDs: Set<String> = []
     @State private var isIndexingSnapshotKeys = false
     @State private var snapshotKeyIndexTask: Task<Void, Never>?
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage("globalShortcut") private var globalShortcut = GlobalShortcutChoice.off.rawValue
+    @AppStorage(GlobalShortcutSettings.defaultsKey) private var globalShortcut = GlobalShortcut.default.storageValue
+    @State private var shortcutRecorder = ShortcutRecorderModel()
     @State private var iCloudDriveAvailable = true
     @State private var launchService = TerminalLaunchService()
     @State private var profiles: [TerminalProfile] = []
@@ -46,6 +50,10 @@ struct SettingsView: View {
         #if DEBUG
         if ConfigSSHPaths.isPreviewMode &&
             ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "backup" { return 1 }
+        if ConfigSSHPaths.isPreviewMode &&
+            ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "about" { return 3 }
+        if ConfigSSHPaths.isPreviewMode &&
+            ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_SETTINGS_TAB"] == "general" { return 2 }
         #endif
         return 0
     }
@@ -104,6 +112,22 @@ struct SettingsView: View {
             .tag(0)
 
             Form {
+                Section("自动快照") {
+                    Picker("自动创建快照", selection: $autoSnapshotInterval) {
+                        ForEach(AutoSnapshotInterval.allCases) { interval in
+                            Text(interval.displayName).tag(interval.rawValue)
+                        }
+                    }
+                    .onChange(of: autoSnapshotInterval) { _, _ in AutoSnapshotScheduler.shared.runNow() }
+                    if autoSnapshotInterval != AutoSnapshotInterval.off.rawValue {
+                        Stepper("保留最近 \(autoSnapshotKeep) 份自动快照", value: $autoSnapshotKeep,
+                                in: AutoSnapshotService.keepRange)
+                        LabeledContent("上次执行", value: autoSnapshotLastResult.isEmpty ? "尚未执行" : autoSnapshotLastResult)
+                    }
+                    Text("App 运行时每小时检查一次：到期且配置有变化时，自动保存 config 与 Include 文件的本机快照。自动快照从不包含密钥；清理时只删除较旧的自动快照，手动快照不受影响。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Section("配置快照") {
                     Text("本机快照可包含配置文件，并在逐次确认后选择密钥；不会上传 iCloud。")
                         .font(.callout)
@@ -229,6 +253,7 @@ struct SettingsView: View {
             .tag(1)
 
             Form {
+                Section("外观与启动") {
                 Picker("外观", selection: $appearance) {
                     Text("跟随系统").tag("system")
                     Text("浅色").tag("light")
@@ -239,22 +264,67 @@ struct SettingsView: View {
                     set: { updateLoginItem($0) }
                 ))
                 .disabled(Bundle.main.bundleURL.pathExtension != "app")
-                Text("主窗口按 ⌘K 打开快速连接；菜单栏图标也可搜索主机。全局快捷键默认不启用。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Picker("全局快捷键", selection: $globalShortcut) {
-                    ForEach(GlobalShortcutChoice.allCases) { choice in
-                        Text(choice.title).tag(choice.rawValue)
-                    }
-                }
-                if globalShortcut != GlobalShortcutChoice.off.rawValue,
-                   globalShortcut != GlobalShortcutManager.shared.activeRawValue {
-                    Label("所选快捷键当前未生效（可能已被其他应用占用），请选择另一组合。",
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
                 if Bundle.main.bundleURL.pathExtension != "app" {
                     Text("登录时启动需要从打包后的 ConfigSSH.app 运行。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                }
+                Section("快速连接") {
+                    LabeledContent("全局快捷键") {
+                        HStack(spacing: 10) {
+                            if let shortcut = currentShortcut {
+                                ShortcutKeycaps(parts: shortcut.keyParts)
+                            } else {
+                                Text("已关闭").foregroundStyle(.secondary)
+                            }
+                            Button(shortcutRecorder.isRecording ? "请按下新的组合键…" : "更改…") {
+                                if shortcutRecorder.isRecording { shortcutRecorder.stop(restore: true) }
+                                else {
+                                    shortcutRecorder.start { recorded in globalShortcut = recorded.storageValue }
+                                }
+                            }
+                            .accessibilityIdentifier("shortcutRecordButton")
+                            Menu("常用组合") {
+                                ForEach(GlobalShortcut.presets, id: \.storageValue) { preset in
+                                    Button(preset.display + (preset == .default ? "（默认）" : "")) {
+                                        globalShortcut = preset.storageValue
+                                    }
+                                }
+                                Divider()
+                                Button("关闭全局快捷键") { globalShortcut = GlobalShortcut.offValue }
+                            }
+                            .fixedSize()
+                        }
+                    }
+                    if shortcutRecorder.isRecording {
+                        Label("按下想用的组合键（需包含 ⌘、⌃、⌥ 之一），按 Esc 取消。", systemImage: "keyboard")
+                            .font(.callout)
+                            .foregroundStyle(BrandPalette.accent)
+                    }
+                    if let message = shortcutRecorder.message {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                    }
+                    if let note = currentShortcut?.cautionNote {
+                        Label(note, systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                    if let shortcut = currentShortcut, shortcut != GlobalShortcutManager.shared.activeShortcut,
+                       !shortcutRecorder.isRecording {
+                        Label("这个快捷键当前未生效（可能已被其他应用占用），请换一个组合。",
+                              systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                    HStack {
+                        Button("立即试用") { GlobalShortcutManager.shared.showPanel() }
+                            .disabled(currentShortcut == nil)
+                        Button("恢复默认（\(GlobalShortcut.default.display)）") { globalShortcut = GlobalShortcut.default.storageValue }
+                            .disabled(currentShortcut == .default)
+                    }
+                    Text("在任何应用中按全局快捷键，屏幕上方会弹出主机搜索框：输入关键词，用 ↑↓ 选择，回车即用默认终端连接，⌘↵ 用新标签页；Esc 或再次按快捷键关闭。也可以点击菜单栏图标搜索；主窗口内按 ⌘K。快捷键只在 ConfigSSH 运行时有效，建议同时开启“登录时启动”。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -349,11 +419,13 @@ struct SettingsView: View {
             }
         }
         .onChange(of: globalShortcut) { previous, current in
-            if !GlobalShortcutManager.shared.apply(current) {
+            if !GlobalShortcutManager.shared.apply(GlobalShortcut.resolved(current)) {
                 globalShortcut = previous
-                settingsError = "快捷键已被其他应用占用，请选择另一组合。"
+                _ = GlobalShortcutManager.shared.apply(GlobalShortcut.resolved(previous))
+                settingsError = "这个快捷键已被其他应用占用，请换一个组合。"
             }
         }
+        .onDisappear { if shortcutRecorder.isRecording { shortcutRecorder.stop(restore: true) } }
         .alert("操作未完成", isPresented: Binding(
             get: { settingsError != nil },
             set: { if !$0 { settingsError = nil } }
@@ -405,16 +477,9 @@ struct SettingsView: View {
             URL(fileURLWithPath: snapshotICloudFolder)
     }
 
-    private var localSnapshotFolder: URL {
-        #if DEBUG
-        if ConfigSSHPaths.isPreviewMode {
-            return writer.rootURL.deletingLastPathComponent().deletingLastPathComponent()
-                .appendingPathComponent("Snapshots")
-        }
-        #endif
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/ConfigSSH/Snapshots")
-    }
+    private var localSnapshotFolder: URL { ConfigSSHPaths.localSnapshotFolder }
+
+    private var currentShortcut: GlobalShortcut? { GlobalShortcut.resolved(globalShortcut) }
 
     private func chooseICloudFolder() {
         let panel = NSOpenPanel()

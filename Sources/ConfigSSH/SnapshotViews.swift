@@ -72,6 +72,10 @@ struct SnapshotBrowserView: View {
                             .font(.callout.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                        if snapshot.manifest.isAutomatic == true {
+                            Label("自动快照（仅配置文件）", systemImage: "clock.arrow.circlepath")
+                                .foregroundStyle(.secondary)
+                        }
                         if snapshot.manifest.includesKeys {
                             Label("此快照包含密钥文件。应用内恢复只处理配置文件，不会恢复私钥。",
                                   systemImage: "exclamationmark.shield.fill")
@@ -164,7 +168,7 @@ struct SnapshotBrowserView: View {
                 .padding(.horizontal, 9)
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(selectedID == snapshot.id ? BrandPalette.selectionBlue.opacity(0.28) : .clear,
+                .background(selectedID == snapshot.id ? BrandPalette.accent.opacity(0.28) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }
