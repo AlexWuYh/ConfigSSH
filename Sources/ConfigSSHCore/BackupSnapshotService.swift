@@ -204,7 +204,9 @@ package struct BackupSnapshotService {
         let children = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
         var records: [SnapshotRecord] = []
         var issues: [String] = []
-        for child in children where child.lastPathComponent.hasPrefix("ConfigSSH-") {
+        // Encrypted snapshots are single `.cssh` files that `EncryptedSnapshotService` lists; only
+        // the older folder-style snapshots are read here, so the two never report each other.
+        for child in children where child.lastPathComponent.hasPrefix("ConfigSSH-") && child.pathExtension != "cssh" {
             do {
                 let details = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 guard details.isDirectory == true, details.isSymbolicLink != true else {
