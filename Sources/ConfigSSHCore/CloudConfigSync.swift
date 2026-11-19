@@ -23,7 +23,7 @@ private struct EncryptedCloudEnvelope: Codable {
 }
 
 package enum CloudConfigCrypto {
-    private static let iterations: UInt32 = 310_000
+    static let iterations: UInt32 = 310_000
 
     package static func encrypt(_ archive: CloudConfigArchive, passphrase: String) throws -> Data {
         guard passphrase.count >= 12 else {
@@ -62,7 +62,7 @@ package enum CloudConfigCrypto {
         }
     }
 
-    private static func deriveKey(passphrase: String, salt: Data) throws -> SymmetricKey {
+    static func deriveKey(passphrase: String, salt: Data) throws -> SymmetricKey {
         var bytes = [UInt8](repeating: 0, count: 32)
         let result = passphrase.withCString { password in
             salt.withUnsafeBytes { saltBytes in
