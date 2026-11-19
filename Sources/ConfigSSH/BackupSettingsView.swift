@@ -18,6 +18,8 @@ struct BackupSettingsView: View {
     @State private var scheduler = BackupScheduler.shared
     @State private var showsBrowser = false
     @State private var showsCloudSync = false
+    @State private var showsExport = false
+    @State private var showsImport = false
     @State private var isEditingPassphrase = false
     @State private var newPassphrase = ""
     @State private var confirmPassphrase = ""
@@ -34,6 +36,7 @@ struct BackupSettingsView: View {
                 statusCard
                 passphraseCard
                 automationCard
+                transferCard
                 moreCard
             }
             .padding(24)
@@ -46,6 +49,8 @@ struct BackupSettingsView: View {
         .sheet(isPresented: $showsCloudSync) {
             CloudSyncView(writer: writer, folder: ICloudLocation.backupFolder, cloudRoot: ICloudLocation.driveRoot)
         }
+        .sheet(isPresented: $showsExport) { HostExportSheet(writer: writer) }
+        .sheet(isPresented: $showsImport) { HostImportSheet(writer: writer) {} }
         .confirmationDialog("移除备份口令？", isPresented: $confirmsRemove) {
             Button("移除并暂停自动备份", role: .destructive) { removePassphrase() }
             Button("取消", role: .cancel) {}
@@ -65,6 +70,8 @@ struct BackupSettingsView: View {
             try? await Task.sleep(for: .seconds(1))
             if environment["CONFIGSSH_PREVIEW_SNAPSHOT_BROWSER"] == "1" { showsBrowser = true }
             if environment["CONFIGSSH_PREVIEW_CLOUD_SYNC"] == "1" { showsCloudSync = true }
+            if environment["CONFIGSSH_PREVIEW_EXPORT"] == "1" { showsExport = true }
+            if environment["CONFIGSSH_PREVIEW_IMPORT"] == "1" { showsImport = true }
         }
         #endif
     }
@@ -238,6 +245,22 @@ struct BackupSettingsView: View {
             }
             .opacity(hasPassphrase ? 1 : 0.55)
             .disabled(!hasPassphrase)
+        }
+    }
+
+    // MARK: Import and export
+
+    private var transferCard: some View {
+        BackupCard(title: "导入与导出", symbol: "square.and.arrow.up.on.square") {
+            Text("把主机配置带到另一台 Mac，或者发给同事。默认导出为 .zip 压缩包，也可以设置一个口令导出为加密的 .cssh 文件。都不包含私钥。")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button { showsExport = true } label: { Label("导出主机配置…", systemImage: "square.and.arrow.up") }
+                Button { showsImport = true } label: { Label("导入主机配置…", systemImage: "square.and.arrow.down") }
+                Spacer()
+            }
+            Text("导入加密文件时，口令验证通过后才会显示内容；导入前会先预览差异，写入前备份被覆盖的文件。")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

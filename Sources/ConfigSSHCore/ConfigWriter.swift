@@ -1174,13 +1174,18 @@ extension ConfigWriter {
     /// snapshot restore: the main `config`, managed `config.d` files, files the current config
     /// statically Includes, or new files whose names are not keys or OpenSSH state. Entries that
     /// came from outside `~/.ssh`, and any file the archive does not contain, are left alone.
-    package func planArchiveRestore(_ archive: BackupArchive, title: String) throws -> ConfigChangePlan {
+    ///
+    /// `includeRoot: false` leaves the current main `config` alone and writes only the other files
+    /// (used when importing hosts into a setup that should keep its own global settings).
+    package func planArchiveRestore(_ archive: BackupArchive, title: String, includeRoot: Bool = true) throws -> ConfigChangePlan {
         try checkSSHDirectory()
         let sshDirectory = rootURL.deletingLastPathComponent().standardizedFileURL
-        let restorable = archive.entries.filter { !$0.isExternal }
+        var restorable = archive.entries.filter { !$0.isExternal }
         guard restorable.filter({ $0.path == "config" }).count == 1 else {
             throw ConfigEditError.unsafe("备份缺少唯一的主配置文件，不能自动恢复")
         }
+        if !includeRoot { restorable.removeAll { $0.path == "config" } }
+        guard !restorable.isEmpty else { throw ConfigEditError.invalid("除主配置外没有可导入的文件") }
         let currentSources = Set(ConfigReader(rootURL: rootURL).scan().sources.map { $0.url.standardizedFileURL.path })
         var versions: [FileVersion] = []
         var changes: [PlannedFileChange] = []
@@ -1191,6 +1196,7 @@ extension ConfigWriter {
                 throw ConfigEditError.unsafe("备份中的文件超过大小限制：\(entry.path)")
             }
             let target = entry.path == "config" ? rootURL : sshDirectory.appendingPathComponent(entry.path).standardizedFileURL
+            if entry.path != "config" { try validateImportedFilePath(entry.path) }
             guard destinations.insert(target.path.lowercased()).inserted,
                   target == rootURL || target.path.hasPrefix(sshDirectory.path + "/") else {
                 throw ConfigEditError.unsafe("备份中的路径重复或超出 ~/.ssh：\(entry.path)")
@@ -1220,6 +1226,18 @@ extension ConfigWriter {
         if external > 0 { warnings.append("备份中有 \(external) 个位于 ~/.ssh 之外的 Include 文件，不会被恢复，需要时请手动处理。") }
         plan.warnings = warnings
         return plan
+    }
+
+    /// Besides the safety rules above, only `config.d/` hosts and files beside `config` that are not
+    /// key or OpenSSH-state names come from an archive.
+    private func validateImportedFilePath(_ path: String) throws {
+        let lowered = path.lowercased()
+        let name = (lowered as NSString).lastPathComponent
+        let reserved = name.hasPrefix("authorized_keys") || name.hasPrefix("known_hosts") || name.hasPrefix("id_") ||
+            name.hasSuffix(".pub") || name.hasSuffix(".pem") || name.hasSuffix(".key") || ["environment", "rc"].contains(name)
+        guard !reserved, !name.hasPrefix(".") else {
+            throw ConfigEditError.unsafe("备份中包含密钥或 OpenSSH 状态文件，已拒绝：\(path)")
+        }
     }
 
     private func validateArchiveRelativePath(_ path: String) throws {
