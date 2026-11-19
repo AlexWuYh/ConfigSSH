@@ -97,6 +97,9 @@ final class EncryptedBackupTests: XCTestCase {
         _ = try EncryptedSnapshotService(folder: paths.snapshots).create(scan: scan(paths.root), passphrase: passphrase)
         let items = try SnapshotCatalog.list(folder: paths.snapshots).items
         XCTAssertEqual(items.map(\.isEncrypted), [true, false], "newest first; plaintext legacy snapshots stay listed")
+        XCTAssertTrue(try SnapshotCatalog.list(folder: paths.snapshots).issues.isEmpty,
+                      "a folder snapshot and a .cssh file side by side raise no warnings")
+        XCTAssertTrue(try BackupSnapshotService().list(in: paths.snapshots).issues.isEmpty, "the legacy scan ignores .cssh files")
     }
 
     func testUnencryptedSnapshotIsReadableWithoutAPassphraseAndMarkedAsSuch() throws {

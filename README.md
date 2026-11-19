@@ -65,7 +65,7 @@ Manage SSH Config Visually. Connect Effortlessly.
 </tr>
 </table>
 
-<sub>以上截图都来自用临时脱敏配置运行的真实应用窗口。`api.example.net`、`192.0.2.21` 等是示例地址，不是真实服务器。</sub>
+<sub>本页所有截图（含备份、导出和云端设备）都来自用临时脱敏配置和 `/tmp` 夹具运行的真实应用窗口，快照和云端设备文件是为截图生成的示例数据。`api.example.net`、`192.0.2.21` 等是示例地址，不是真实服务器。</sub>
 
 ## 安装
 
@@ -246,6 +246,17 @@ ConfigSSH 启动后会读取 `~/.ssh/config` 及其能访问的 `Include` 文件
 
 打开“设置 › 备份”。页面从上到下是：当前是否受保护、备份口令、自动备份、更多。
 
+<table>
+<tr>
+<td width="50%"><img src="Assets/screenshots/backup-page.png" alt="设置里的备份页：顶部状态卡显示“自动备份已开启”以及本机快照和 iCloud 同步的最近时间，下方依次是本机快照加密选项、备份口令和自动备份开关"></td>
+<td width="50%"><img src="Assets/screenshots/backup-browser.png" alt="浏览与恢复窗口：左侧分为加密快照和未加密快照两组，右侧列出选中快照包含的配置文件和恢复按钮"></td>
+</tr>
+<tr>
+<td align="center"><b>备份页</b>：状态、口令与自动备份开关</td>
+<td align="center"><b>浏览与恢复</b>：加密与未加密快照分组列出</td>
+</tr>
+</table>
+
 **先设置一个备份口令**（至少 12 个字符）。加密的本机快照和 iCloud 副本都用它加密，它保存在这台 Mac 的钥匙串里，不会上传。口令丢失后无法找回这些备份。导出文件则单独设置口令，与它无关。
 
 macOS 第一次可能询问是否允许 ConfigSSH 访问钥匙串，选择“始终允许”即可，之后不会再问。ConfigSSH 每次运行最多读取一次钥匙串，打开设置页和点“立即备份”都不会再触发授权弹窗。
@@ -269,6 +280,8 @@ macOS 第一次可能询问是否允许 ConfigSSH 访问钥匙串，选择“始
 ## 导入与导出
 
 在“设置 › 备份 › 导入与导出”。适合把主机配置带到另一台 Mac，或者发给同事。
+
+<p align="center"><img src="Assets/screenshots/export-sheet.png" width="520" alt="导出主机配置弹窗：可在压缩包 .zip 和加密文件 .cssh 之间切换，选择压缩包时显示“压缩包没有加密”的橙色提醒"></p>
 
 **导出**：点“导出主机配置…”，选择格式：
 
@@ -298,6 +311,8 @@ macOS 第一次可能询问是否允许 ConfigSSH 访问钥匙串，选择“始
 - 每台 Mac 在 iCloud Drive 中有一个独立的 `Devices/<设备ID>.cssh` 文件，彼此不会覆盖。
 - 内容在本机用 **AES-GCM** 加密，密钥由备份口令派生。口令不会上传，所有 Mac 使用同一个口令。
 - 只同步 `config` 和 `config.d/` 下的 `.conf` 文件，**不包含私钥**。
+
+<p align="center"><img src="Assets/screenshots/cloud-devices.png" width="620" alt="云端设备页：列出两台示例 Mac 的设备名、上次上传时间和文件数，这台 Mac 带标记，下方是预览拉取按钮"></p>
 
 **第一次使用**：在“设置 › 备份”设置口令，打开“同步到 iCloud”。位置默认是 iCloud Drive 里的 `ConfigSSH` 文件夹，可以点“更改位置…”。之后配置有变更会自动上传。
 

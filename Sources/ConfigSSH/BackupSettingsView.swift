@@ -74,6 +74,13 @@ struct BackupSettingsView: View {
             guard ConfigSSHPaths.isPreviewMode else { return }
             let environment = ProcessInfo.processInfo.environment
             try? await Task.sleep(for: .seconds(1))
+            // Screenshots: take real backups first so the browser and the cloud page have content.
+            if environment["CONFIGSSH_PREVIEW_SEED_BACKUPS"] == "1" {
+                scheduler.backupNow()
+                for _ in 0..<40 where scheduler.isRunning || scheduler.state.lastSnapshotAt == nil {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
             if environment["CONFIGSSH_PREVIEW_SNAPSHOT_BROWSER"] == "1" { showsBrowser = true }
             if environment["CONFIGSSH_PREVIEW_CLOUD_SYNC"] == "1" { showsCloudSync = true }
             if environment["CONFIGSSH_PREVIEW_EXPORT"] == "1" { showsExport = true }
