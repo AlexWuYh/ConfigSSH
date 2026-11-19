@@ -356,6 +356,13 @@
 - **没有变更：** `docs/RELEASING.md`（发布规范与本次改动无关）；里程碑状态表 M0–M4（仍是原有阶段，本轮功能不属于其中任何一个，无需改状态）。
 - **仍待做：** 导入弹窗的 README 截图（初始状态几乎是空白，没有信息量，暂未放入）。
 
+## 2026 年 11 月 19 日 v0.3.0 Release
+
+- 合入 `main`：PR #11（显示名称、字段说明与示例、关于页、开机自启）、PR #12（加密备份与全局自动备份、iCloud 云端设备页、导入导出，以及试用反馈的几处修正）、PR #10（v0.2.0 记录，已解决与新条目的追加冲突）、PR #13（`v0.3.0` Release Notes，默认打包版本升为 0.3.0）。随后在 `main` 提交 `0729759` 上打 tag `v0.3.0`。
+- 发布流水线（run `44492835447`）成功创建 **Pre-release**，附 `ConfigSSH-v0.3.0-unsigned-macos-arm64.zip` 与 `SHA256SUMS.txt`。本机下载核对：`shasum -a 256 -c` 通过；包内版本号 0.3.0、Bundle ID `cn.wuewa.configssh`、arm64；`Contents/Helpers/configssh-askpass`、图标、LICENSE 与资源 bundle 均在；签名为 adhoc（未签名、未公证）。
+- 发布前检查：`swift test` 232 项通过，`swift build -c release`、脚本测试、Release Notes 校验通过，可达历史中无 `.ai/`。
+- 仍不能称为正式公开分发版本。已写入 Release Notes “已知限制”的待验收项：真实 iCloud Drive 多机同步、开机自启的真实启用、在真实服务器上用密码走完部署公钥流程、未签名构建的钥匙串授权。README 中备份页、浏览与恢复、云端设备页、导出弹窗的截图已在后续 PR 补上（见下一节）。
+
 ## 2026 年 11 月 19 日 备份相关 README 截图
 
 - 备份页、浏览与恢复、云端设备页、导出弹窗四张截图已加入 README，均为 Debug App 在 `/tmp` 夹具中的真实窗口截图：快照（4 份加密、1 份未加密，时间回填）和两台示例云端设备由仅在 `CONFIGSSH_SEED_ROOT` 位于 `/tmp/` 时运行的 `ScreenshotSeedTests` 生成；新增 Debug 预览开关 `CONFIGSSH_PREVIEW_SEED_BACKUPS`。不读取真实 `~/.ssh` 或 iCloud。
