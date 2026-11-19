@@ -112,62 +112,25 @@ struct AboutConfigSSHView: View {
     private let checker = UpdateChecker.shared
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                Image(nsImage: BrandIcon.image)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 88, height: 88)
-                Text("ConfigSSH")
-                    .font(.largeTitle.bold())
-                Text(UpdateChecker.currentVersion.map { "版本 \($0)" } ?? "开发版")
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Text("Manage SSH Config Visually. Connect Effortlessly.")
-                    .font(.headline)
-                Text("让 SSH 配置管理更简单，让服务器连接更高效。")
-                    .foregroundStyle(.secondary)
-                Text("Native · Simple · Local First")
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
-
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                .foregroundStyle(.secondary)
-                            Link("github.com/AlexWuYh/ConfigSSH", destination: UpdateCheck.repositoryURL)
-                            Spacer()
-                            Button("复制") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(UpdateCheck.repositoryURL.absoluteString, forType: .string)
-                            }
-                            .buttonStyle(.borderless)
-                            .font(.caption)
-                        }
-                        Divider()
-                        updateSection
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 22) {
+                    hero
+                    HStack(alignment: .top, spacing: 12) {
+                        LinkCard(symbol: "globe", title: "官方网站", subtitle: "configssh.wuewa.cn", destination: ProjectLinks.website)
+                        LinkCard(symbol: "chevron.left.forwardslash.chevron.right", title: "GitHub 仓库", subtitle: "AlexWuYh/ConfigSSH", destination: ProjectLinks.repository)
+                        LinkCard(symbol: "shippingbox", title: "版本发布", subtitle: "下载与更新日志", destination: ProjectLinks.releases)
                     }
-                    .padding(6)
+                    updateCard
+                    shortcuts
                 }
-                .frame(maxWidth: 420)
-
-                GroupBox("常用命令") {
-                    Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                        GridRow { Text("⌘N").font(.body.monospaced()); Text("新增主机配置") }
-                        GridRow { Text("⌘K").font(.body.monospaced()); Text("快速连接") }
-                        GridRow { Text("⌘,").font(.body.monospaced()); Text("打开设置") }
-                    }
-                    .padding(10)
-                }
-                .frame(maxWidth: 420)
-                Text("MIT License · © 2026 ConfigSSH contributors")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .padding(.horizontal, 28)
+                .padding(.top, 26)
+                .padding(.bottom, 18)
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
+            footer
         }
         #if DEBUG
         .task {
@@ -178,44 +141,149 @@ struct AboutConfigSSHView: View {
         #endif
     }
 
-    @ViewBuilder
-    private var updateSection: some View {
-        HStack {
-            Button(checker.state == .checking ? "正在检查…" : "检查更新") { checker.check() }
-                .disabled(checker.state == .checking)
-            if checker.state == .checking { ProgressView().controlSize(.small) }
-            Spacer()
-            Link("所有版本", destination: UpdateCheck.releasesPageURL)
+    private var hero: some View {
+        VStack(spacing: 10) {
+            Image(nsImage: BrandIcon.image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 96, height: 96)
+                .shadow(color: BrandPalette.accent.opacity(0.35), radius: 14, y: 6)
+            Text("ConfigSSH")
+                .font(.system(size: 30, weight: .bold))
+            Text(UpdateChecker.currentVersion.map { "版本 \($0)" } ?? "开发版")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .foregroundStyle(BrandPalette.accent)
+                .background(BrandPalette.accent.opacity(0.14), in: Capsule())
+                .textSelection(.enabled)
+            Text("让 SSH 配置管理更简单，让服务器连接更高效")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .padding(.top, 2)
+            Text("原生 macOS 的 SSH Config 可视化管理工具 · 本地优先")
                 .font(.callout)
+                .foregroundStyle(.secondary)
         }
-        switch checker.state {
-        case .idle, .checking:
-            EmptyView()
-        case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-                .font(.callout)
-        case .finished(.upToDate(let current), let date):
-            Label("已是最新版本（\(current)）· \(date.formatted(date: .omitted, time: .shortened)) 检查",
-                  systemImage: "checkmark.circle")
-                .font(.callout)
-        case .finished(.updateAvailable(let release), _):
-            VStack(alignment: .leading, spacing: 6) {
-                Label("发现新版本 \(release.tag)\(release.isPrerelease ? "（预发布）" : "")",
-                      systemImage: "arrow.down.circle.fill")
+    }
+
+    private var updateCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.triangle.2.circlepath")
                     .foregroundStyle(BrandPalette.accent)
-                    .font(.callout.bold())
-                Link("在 GitHub 查看并下载", destination: release.pageURL)
+                Text("版本更新").font(.headline)
+                Spacer()
+                if checker.state == .checking { ProgressView().controlSize(.small) }
+                Button(checker.state == .checking ? "正在检查…" : "检查更新") { checker.check() }
+                    .disabled(checker.state == .checking)
+            }
+            switch checker.state {
+            case .idle, .checking:
+                EmptyView()
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
                     .font(.callout)
-                Text("ConfigSSH 不会自动下载或安装更新。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            case .finished(.upToDate(let current), let date):
+                Label("已是最新版本（\(current)）· \(date.formatted(date: .omitted, time: .shortened)) 检查",
+                      systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.callout)
+            case .finished(.updateAvailable(let release), _):
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("发现新版本 \(release.tag)\(release.isPrerelease ? "（预发布）" : "")",
+                          systemImage: "arrow.down.circle.fill")
+                        .foregroundStyle(BrandPalette.accent)
+                        .font(.callout.bold())
+                    Link("在 GitHub 查看并下载", destination: release.pageURL)
+                        .font(.callout)
+                        .foregroundStyle(BrandPalette.accent)
+                    Text("ConfigSSH 不会自动下载或安装更新。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Divider()
+            Toggle("启动时自动检查更新", isOn: $checkAtLaunch)
+            Text("只向 GitHub 请求公开的版本列表，不发送任何主机或配置信息。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var shortcuts: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("常用快捷键").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 18) {
+                ForEach([("⌘N", "新增主机"), ("⌘K", "快速连接"),
+                         (GlobalShortcutSettings.stored?.display ?? "未设置", "全局呼出"), ("⌘,", "设置")], id: \.1) { item in
+                    HStack(spacing: 6) {
+                        Text(item.0)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.quaternary))
+                        Text(item.1).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
             }
         }
-        Toggle("启动时自动检查更新", isOn: $checkAtLaunch)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// License and author, pinned to the bottom of the page.
+    private var footer: some View {
+        VStack(spacing: 4) {
+            Divider()
+            HStack(spacing: 6) {
+                Text("作者")
+                    .foregroundStyle(.secondary)
+                Link(ProjectLinks.authorName, destination: ProjectLinks.author)
+                    .foregroundStyle(BrandPalette.accent)
+                Text("·").foregroundStyle(.quaternary)
+                Link(ProjectLinks.licenseName, destination: ProjectLinks.license)
+                    .foregroundStyle(BrandPalette.accent)
+                Text("开源").foregroundStyle(.secondary)
+            }
             .font(.callout)
-        Text("检查更新只会向 GitHub 请求公开的版本列表，不发送任何主机或配置信息。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .padding(.top, 8)
+            Text("© \(ProjectLinks.copyrightYear) \(ProjectLinks.authorName). 以 \(ProjectLinks.licenseName) 发布，可自由使用、修改和分发。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 10)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct LinkCard: View {
+    let symbol: String
+    let title: String
+    let subtitle: String
+    let destination: URL
+
+    var body: some View {
+        Link(destination: destination) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.title3)
+                    .foregroundStyle(BrandPalette.accent)
+                    .frame(width: 34, height: 34)
+                    .background(BrandPalette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.85)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(destination.absoluteString)
     }
 }

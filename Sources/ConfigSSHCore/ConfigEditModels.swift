@@ -129,6 +129,9 @@ package struct HostInput: Equatable {
     package var group: String
     package var identitiesOnly: IdentitiesOnlyChoice
     package var connectionReuse: ConnectionReuse
+    /// Optional name shown in lists and used for the new config file's name. It is not an
+    /// OpenSSH option and is only read when a host is added; empty means "use the alias".
+    package var displayName: String
 
     package init(
         alias: String = "",
@@ -139,7 +142,8 @@ package struct HostInput: Equatable {
         proxyJump: String = "",
         group: String = "",
         identitiesOnly: IdentitiesOnlyChoice = .unset,
-        connectionReuse: ConnectionReuse = .off
+        connectionReuse: ConnectionReuse = .off,
+        displayName: String = ""
     ) {
         self.alias = alias
         self.hostName = hostName
@@ -150,6 +154,7 @@ package struct HostInput: Equatable {
         self.group = group
         self.identitiesOnly = identitiesOnly
         self.connectionReuse = connectionReuse
+        self.displayName = displayName
     }
 
     package init(host: HostRecord) {
@@ -357,4 +362,72 @@ package struct BackupRecord: Codable, Identifiable {
 package struct CommitReceipt {
     package let backups: [BackupRecord]
     package let changedPaths: [String]
+}
+
+/// Rules for the name a new host's config file gets (display name, else alias).
+package enum HostFileName {
+    package static let maxLength = 80
+
+    /// The stem used for `<stem>.conf`: the trimmed display name when given, else the alias.
+    package static func stem(displayName: String, alias: String) -> String {
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? alias : trimmed
+    }
+
+    /// Why `name` cannot be a file name, or nil. Unicode (e.g. Chinese) and inner spaces are fine.
+    package static func problem(_ name: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.count > maxLength { return "显示名称最多 \(maxLength) 个字符" }
+        if trimmed.hasPrefix(".") { return "显示名称不能以点开头（会变成隐藏文件）" }
+        let forbidden = CharacterSet(charactersIn: "/\\:\"*?<>|")
+        if trimmed.unicodeScalars.contains(where: { forbidden.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
+            return "显示名称不能包含 / \\ : \" * ? < > | 或控制字符，因为它会用作配置文件名"
+        }
+        return nil
+    }
+}
+
+/// The rules the host form checks while typing and again when saving, so a field is flagged
+/// as soon as it is wrong and the saved result can never disagree with the hint.
+package enum HostFieldRules {
+    private static let aliasCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    private static let hostCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
+
+    package static func aliasProblem(_ alias: String) -> String? {
+        guard let first = alias.unicodeScalars.first,
+              CharacterSet.alphanumerics.contains(first),
+              alias.unicodeScalars.allSatisfy({ aliasCharacters.contains($0) }) else {
+            return "Host 别名只能包含英文字母、数字、点、下划线和短横线，并以字母或数字开头"
+        }
+        return nil
+    }
+
+    package static func hostNameProblem(_ hostName: String) -> String? {
+        if !hostName.isEmpty && !hostName.unicodeScalars.allSatisfy({ hostCharacters.contains($0) }) {
+            return "主机地址包含不支持的字符（可用字母、数字、点、冒号、下划线、短横线）"
+        }
+        return nil
+    }
+
+    package static func portProblem(_ port: String) -> String? {
+        if !port.isEmpty && !(Int(port).map { (1...65535).contains($0) } ?? false) {
+            return "端口必须是 1 到 65535 的整数"
+        }
+        return nil
+    }
+
+    package static func userProblem(_ user: String) -> String? {
+        if user.contains(where: \.isWhitespace) { return "用户名不能包含空白字符" }
+        if user.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) || user.contains("#") ||
+            user.contains("\"") || user.contains("\\") { return "用户名包含不支持的字符" }
+        return nil
+    }
+
+    package static func proxyJumpProblem(_ value: String) -> String? {
+        if value.contains(where: \.isWhitespace) { return "跳板机不能包含空白字符；多台请用逗号分隔" }
+        if value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) || value.contains("#") ||
+            value.contains("\"") || value.contains("\\") { return "跳板机包含不支持的字符" }
+        return nil
+    }
 }

@@ -144,9 +144,19 @@ struct ContentView: View {
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
+    /// The metadata to show for a host: the display name saved in 主机信息, else the one carried by
+    /// the file name (a name given when the host was added). The raw record is only for editing.
+    private func shownMetadata(_ host: HostRecord) -> HostMetadata? {
+        let record = metadata[host.metadataKey]
+        guard (record?.displayName ?? "").isEmpty, let name = scan.fileDisplayName(for: host) else { return record }
+        var shown = record ?? HostMetadata(hostKey: host.metadataKey)
+        shown.displayName = name
+        return shown
+    }
+
     private var visibleHosts: [HostRecord] {
         let matching = scan.hosts.filter { host in
-            let details = metadata[host.metadataKey]
+            let details = shownMetadata(host)
             let terms = searchText.split(whereSeparator: \.isWhitespace).map(String.init)
             let extra = [details?.displayName, details?.groupName, details?.note]
                 .compactMap { $0 } + (details?.tags ?? [])
@@ -250,7 +260,7 @@ struct ContentView: View {
                 if let host = selectedHostForDetail {
                     HostDetailView(host: host,
                                    sourceText: scan.sourceText(for: host),
-                                   metadata: metadata[host.metadataKey],
+                                   metadata: shownMetadata(host),
                                    defaultTerminal: TerminalSelection.resolved(defaultTerminalRaw, from: terminalCapabilities),
                                    defaultOpenMode: metadata[host.metadataKey]?.preferredOpenMode.map(TerminalOpenMode.resolved(_:))
                                         ?? TerminalOpenMode.resolved(defaultOpenModeRaw),
@@ -643,7 +653,7 @@ struct ContentView: View {
                             } else {
                                 ForEach(members) { host in
                                     Button { selectedHostID = host.id } label: {
-                                        HostRowView(host: host, metadata: metadata[host.metadataKey])
+                                        HostRowView(host: host, metadata: shownMetadata(host))
                                             .padding(.horizontal, 11)
                                             .padding(.vertical, 4)
                                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -902,9 +912,13 @@ struct ContentView: View {
         guard ConfigSSHPaths.isPreviewMode else { return }
         let environment = ProcessInfo.processInfo.environment
         guard environment["CONFIGSSH_PREVIEW_EDIT_HOST"] != nil || environment["CONFIGSSH_PREVIEW_DEPLOY_HOST"] != nil ||
-              environment["CONFIGSSH_PREVIEW_DEPLOY_FROM_KEYS"] != nil else { return }
+              environment["CONFIGSSH_PREVIEW_DEPLOY_FROM_KEYS"] != nil ||
+              environment["CONFIGSSH_PREVIEW_ADD_HOST"] != nil else { return }
         for _ in 0..<40 where isScanning {
             try? await Task.sleep(for: .milliseconds(250))
+        }
+        if environment["CONFIGSSH_PREVIEW_ADD_HOST"] == "1" {
+            editorRequest = EditorRequest(mode: .add(group: ""))
         }
         if let alias = environment["CONFIGSSH_PREVIEW_EDIT_HOST"],
            let host = scan.hosts.first(where: { $0.alias == alias }) {

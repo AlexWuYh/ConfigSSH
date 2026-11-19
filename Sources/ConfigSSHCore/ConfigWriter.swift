@@ -437,6 +437,7 @@ package struct ConfigWriter: Sendable {
         switch action {
         case .add(let input):
             try validate(input, requireHostName: true)
+            if let problem = HostFileName.problem(input.displayName) { throw ConfigEditError.invalid(problem) }
             try validateIdentitiesOnly(input, existing: nil)
             try validateConnectionReuse(input, existing: nil)
             guard !scan.hosts.contains(where: { $0.alias.caseInsensitiveCompare(input.alias) == .orderedSame }) else {
@@ -500,8 +501,9 @@ package struct ConfigWriter: Sendable {
                 throw ConfigEditError.conflict("主机文件已变化，请重新载入")
             }
             let source = current.data ?? Data()
+            // The file name may be a display name, so it is not compared with the alias: a managed
+            // file that holds only this one host (first real line `Host <alias>`) goes whole.
             let deletesWholeFile = isManagedHostFile(host.sourceURL) &&
-                host.sourceURL.deletingPathExtension().lastPathComponent == host.alias &&
                 scan.hosts.filter({ $0.sourceURL == host.sourceURL }).count == 1 &&
                 !scan.rules.contains(where: { $0.sourceURL.standardizedFileURL == host.sourceURL.standardizedFileURL }) &&
                 String(data: source, encoding: .utf8)?.split(whereSeparator: \.isNewline).first(where: {
@@ -679,8 +681,7 @@ package struct ConfigWriter: Sendable {
             if file.lastPathComponent == ".DS_Store" { continue }
             guard file.pathExtension.lowercased() == "conf",
                   let host = scan.hosts.first(where: { $0.sourceURL.standardizedFileURL == file.standardizedFileURL }),
-                  scan.hosts.filter({ $0.sourceURL.standardizedFileURL == file.standardizedFileURL }).count == 1,
-                  host.alias == file.deletingPathExtension().lastPathComponent else {
+                  scan.hosts.filter({ $0.sourceURL.standardizedFileURL == file.standardizedFileURL }).count == 1 else {
                 throw ConfigEditError.unsafe("分组包含非独立主机文件，不能自动移动：\(file.path)")
             }
             let removal = try plan(.delete(hostID: host.id), from: scan)
@@ -752,7 +753,8 @@ package struct ConfigWriter: Sendable {
             }
         }
         let directory = group.isEmpty ? managedDirectoryURL : managedDirectoryURL.appendingPathComponent(group)
-        return directory.appendingPathComponent("\(input.alias).conf").standardizedFileURL
+        let stem = HostFileName.stem(displayName: input.displayName, alias: input.alias)
+        return directory.appendingPathComponent("\(stem).conf").standardizedFileURL
     }
 
     private func existingManagedFiles() -> [URL] {
@@ -897,34 +899,16 @@ package struct ConfigWriter: Sendable {
     }
 
     private func validate(_ input: HostInput, requireHostName: Bool) throws {
-        let aliasCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-        guard let first = input.alias.unicodeScalars.first,
-              CharacterSet.alphanumerics.contains(first),
-              input.alias.unicodeScalars.allSatisfy({ aliasCharacters.contains($0) }) else {
-            throw ConfigEditError.invalid("Host 别名只能包含英文字母、数字、点、下划线和短横线，并以字母或数字开头")
+        if let problem = HostFieldRules.aliasProblem(input.alias) { throw ConfigEditError.invalid(problem) }
+        if requireHostName && input.hostName.isEmpty { throw ConfigEditError.invalid("请填写主机地址") }
+        if let problem = HostFieldRules.hostNameProblem(input.hostName) { throw ConfigEditError.invalid(problem) }
+        if let problem = HostFieldRules.portProblem(input.port) { throw ConfigEditError.invalid(problem) }
+        if input.identityFile.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) ||
+            input.identityFile.contains("#") || input.identityFile.contains("\"") || input.identityFile.contains("\\") {
+            throw ConfigEditError.invalid("私钥路径包含不支持的字符")
         }
-        let hostCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
-        if requireHostName && input.hostName.isEmpty {
-            throw ConfigEditError.invalid("请填写主机地址")
-        }
-        if !input.hostName.isEmpty && !input.hostName.unicodeScalars.allSatisfy({ hostCharacters.contains($0) }) {
-            throw ConfigEditError.invalid("主机地址包含不支持的字符")
-        }
-        if !input.port.isEmpty && !(Int(input.port).map { (1...65535).contains($0) } ?? false) {
-            throw ConfigEditError.invalid("端口必须是 1 到 65535 的整数")
-        }
-        for (name, value) in [("用户名", input.user), ("私钥路径", input.identityFile), ("跳板机", input.proxyJump)] {
-            guard !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
-                  !value.contains("#"), !value.contains("\""), !value.contains("\\") else {
-                throw ConfigEditError.invalid("\(name)包含不支持的字符")
-            }
-        }
-        if !input.user.isEmpty && input.user.contains(where: \.isWhitespace) {
-            throw ConfigEditError.invalid("用户名不能包含空白字符")
-        }
-        if !input.proxyJump.isEmpty && input.proxyJump.contains(where: \.isWhitespace) {
-            throw ConfigEditError.invalid("跳板机不能包含空白字符")
-        }
+        if let problem = HostFieldRules.userProblem(input.user) { throw ConfigEditError.invalid(problem) }
+        if let problem = HostFieldRules.proxyJumpProblem(input.proxyJump) { throw ConfigEditError.invalid(problem) }
     }
 
     private func render(_ input: HostInput, newline: String) -> String {
