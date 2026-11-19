@@ -73,10 +73,15 @@ struct HostExportSheet: View {
     private func export() {
         let panel = NSSavePanel()
         let stamp = Self.stamp()
-        panel.nameFieldStringValue = encrypted ? "ConfigSSH-主机配置-\(stamp).cssh" : "ConfigSSH-主机配置-\(stamp).zip"
-        panel.allowedContentTypes = encrypted ? [UTType(filenameExtension: "cssh") ?? .data] : [.zip]
+        let ext = encrypted ? "cssh" : "zip"
+        panel.nameFieldStringValue = FileNaming.withSingleExtension("ConfigSSH-主机配置-\(stamp)", ext)
+        // A custom extension is appended by the panel itself, which doubled it in a suffixed name.
+        // Leave the type open and make sure of the extension once, below.
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard PanelFocus.run({ panel.runModal() }) == .OK, var url = panel.url else { return }
+        url = url.deletingLastPathComponent().appendingPathComponent(FileNaming.withSingleExtension(url.lastPathComponent, ext))
         isWorking = true
         result = nil
         let root = writer.rootURL
@@ -230,7 +235,7 @@ struct HostImportSheet: View {
         panel.allowedContentTypes = [.zip, UTType(filenameExtension: "cssh") ?? .data]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard PanelFocus.run({ panel.runModal() }) == .OK, let url = panel.url else { return }
         errorMessage = nil
         notice = nil
         do {

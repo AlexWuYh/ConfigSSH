@@ -88,6 +88,17 @@ package struct CloudConfigDeviceSummary: Sendable {
     package let deviceID: UUID
     package let deviceName: String?
     package let error: String?
+    /// When that Mac last uploaded, and how many files; known once the file could be opened.
+    package var updatedAt: Date?
+    package var fileCount: Int?
+
+    package init(deviceID: UUID, deviceName: String?, error: String?, updatedAt: Date? = nil, fileCount: Int? = nil) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.error = error
+        self.updatedAt = updatedAt
+        self.fileCount = fileCount
+    }
 }
 
 package struct CloudPushPlan: Sendable {
@@ -172,7 +183,7 @@ package struct CloudConfigSyncService: Sendable {
                 let archive = try CloudConfigCrypto.decrypt(data, deviceID: slot.deviceID,
                                                             passphrase: passphrase)
                 return CloudConfigDeviceSummary(deviceID: slot.deviceID, deviceName: archive.deviceName,
-                                                error: nil)
+                                                error: nil, updatedAt: archive.createdAt, fileCount: archive.files.count)
             } catch {
                 return CloudConfigDeviceSummary(deviceID: slot.deviceID, deviceName: nil,
                                                 error: error.localizedDescription)

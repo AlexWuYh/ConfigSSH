@@ -164,3 +164,15 @@ final class HostTransferTests: XCTestCase {
         XCTAssertThrowsError(try HostTransfer.readZip(try ZipArchive.write([.init(path: "notes.txt", content: Data("x".utf8))])), "no config inside")
     }
 }
+
+final class FileNamingTests: XCTestCase {
+    func testExtensionAppearsExactlyOnce() {
+        XCTAssertEqual(FileNaming.withSingleExtension("x.cssh", "cssh"), "x.cssh")
+        XCTAssertEqual(FileNaming.withSingleExtension("x.cssh.cssh", "cssh"), "x.cssh", "the reported bug")
+        XCTAssertEqual(FileNaming.withSingleExtension("x", "cssh"), "x.cssh")
+        XCTAssertEqual(FileNaming.withSingleExtension("主机配置-20261119.CSSH", "cssh"), "主机配置-20261119.cssh")
+        XCTAssertEqual(FileNaming.withSingleExtension("a.zip.zip", "zip"), "a.zip")
+        XCTAssertEqual(FileNaming.withSingleExtension("a.cssh", "zip"), "a.cssh.zip", "a different extension is kept as part of the name")
+        XCTAssertEqual(FileNaming.withSingleExtension(".cssh", "cssh"), "ConfigSSH.cssh")
+    }
+}

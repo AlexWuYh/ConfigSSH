@@ -20,6 +20,7 @@ struct BackupSettingsView: View {
     @State private var showsCloudSync = false
     @State private var showsExport = false
     @State private var showsImport = false
+    @State private var rememberInKeychain = BackupPassphraseStore.storage == .keychain
     @State private var isEditingPassphrase = false
     @State private var newPassphrase = ""
     @State private var confirmPassphrase = ""
@@ -47,7 +48,7 @@ struct BackupSettingsView: View {
             BackupBrowserView(writer: writer, folder: ConfigSSHPaths.localSnapshotFolder, cloudFolder: iCloudAvailable ? ICloudLocation.backupFolder : nil)
         }
         .sheet(isPresented: $showsCloudSync) {
-            CloudSyncView(writer: writer, folder: ICloudLocation.backupFolder, cloudRoot: ICloudLocation.driveRoot)
+            CloudDevicesView(writer: writer, folder: ICloudLocation.backupFolder, cloudRoot: ICloudLocation.driveRoot)
         }
         .sheet(isPresented: $showsExport) { HostExportSheet(writer: writer) }
         .sheet(isPresented: $showsImport) { HostImportSheet(writer: writer) {} }
@@ -141,7 +142,9 @@ struct BackupSettingsView: View {
     private var passphraseCard: some View {
         BackupCard(title: "备份口令", symbol: "key.fill") {
             if hasPassphrase && !isEditingPassphrase {
-                Label("已设置，保存在这台 Mac 的钥匙串里，不会上传。", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label(BackupPassphraseStore.storage == .keychain ? "已设置，保存在这台 Mac 的钥匙串里，不会上传。"
+                                                                   : "本次运行已输入。口令只在内存里，退出 ConfigSSH 后会忘记。",
+                      systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 Text("本机快照、iCloud 副本和导出的备份文件都用它加密。口令丢失后无法找回这些备份，请自行妥善记录。")
                     .font(.callout).foregroundStyle(.secondary)
                 HStack {
@@ -149,19 +152,30 @@ struct BackupSettingsView: View {
                     Button("移除…", role: .destructive) { confirmsRemove = true }
                 }
             } else {
-                Text(hasPassphrase ? "输入新的口令。" : "设置一个口令来加密所有备份，至少 12 个字符。")
+                Text(hasPassphrase ? "输入新的口令。" : sessionOnlyReminder ?? "设置一个口令来加密所有备份，至少 12 个字符。")
                     .font(.callout).foregroundStyle(.secondary)
                 SecureField("新口令", text: $newPassphrase).textContentType(.newPassword)
                 SecureField("再输入一次", text: $confirmPassphrase)
                 if let problem = passphraseProblem {
                     Label(problem, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.red)
                 }
+                VStack(alignment: .leading, spacing: 4) {
+                    Picker("保存方式", selection: $rememberInKeychain) {
+                        Text("保存到钥匙串（推荐）").tag(true)
+                        Text("仅本次运行，不保存").tag(false)
+                    }
+                    .pickerStyle(.radioGroup)
+                    Text(rememberInKeychain
+                         ? "重启后自动备份照常运行。macOS 可能在第一次使用时询问是否允许 ConfigSSH 访问钥匙串，选择“始终允许”后不会再询问。"
+                         : "不会向钥匙串写入任何东西，也就不会出现授权弹窗。代价是每次启动 ConfigSSH 都要重新输入一次，输入前自动备份不会运行。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if hasPassphrase {
                     Label("更改后，用旧口令加密的快照需要输入旧口令才能打开；iCloud 里这台 Mac 的旧文件需要你确认后才会被新口令覆盖。",
                           systemImage: "info.circle").font(.caption).foregroundStyle(.orange)
                 }
                 HStack {
-                    Button("保存口令") { savePassphrase() }
+                    Button(rememberInKeychain ? "保存口令" : "使用这个口令") { savePassphrase() }
                         .buttonStyle(.borderedProminent)
                         .disabled(newPassphrase.isEmpty || passphraseProblem != nil)
                     if hasPassphrase { Button("取消") { isEditingPassphrase = false; newPassphrase = ""; confirmPassphrase = "" } }
@@ -171,6 +185,11 @@ struct BackupSettingsView: View {
                 Label(message, systemImage: messageIsError ? "xmark.octagon" : "checkmark.circle").font(.callout).foregroundStyle(messageIsError ? .red : .green)
             }
         }
+    }
+
+    /// In "仅本次运行" mode a new launch has no passphrase until it is typed again.
+    private var sessionOnlyReminder: String? {
+        BackupPassphraseStore.storage == .session ? "你选择了“仅本次运行”：这次启动还没有输入口令，输入后自动备份才会开始。请输入和之前相同的口令，否则旧的备份无法用它打开。" : nil
     }
 
     private var passphraseProblem: String? {
@@ -235,7 +254,7 @@ struct BackupSettingsView: View {
                     .font(.callout)
                     HStack {
                         Button("更改位置…") { chooseICloudFolder() }
-                        Button("管理云端设备 / 从其他 Mac 拉取…") { showsCloudSync = true }
+                        Button("云端设备与拉取…") { showsCloudSync = true }
                     }
                     Toggle("云端副本可以不包含 ~/.ssh 之外的 Include 文件", isOn: $acceptsIncomplete)
                         .font(.callout)
@@ -295,7 +314,7 @@ struct BackupSettingsView: View {
 
     private func savePassphrase() {
         do {
-            try BackupPassphraseStore.save(newPassphrase)
+            try BackupPassphraseStore.save(newPassphrase, storage: rememberInKeychain ? .keychain : .session)
             newPassphrase = ""; confirmPassphrase = ""
             isEditingPassphrase = false
             messageIsError = false

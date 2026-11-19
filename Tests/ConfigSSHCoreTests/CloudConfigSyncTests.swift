@@ -37,6 +37,7 @@ final class CloudConfigSyncTests: XCTestCase {
         let summaries = try item.service.describeSlots(passphrase: passphrase)
         XCTAssertEqual(Set(summaries.compactMap(\.deviceName)), Set(["Mac One", "Mac Two"]))
         XCTAssertTrue(summaries.allSatisfy { $0.error == nil })
+        XCTAssertTrue(summaries.allSatisfy { $0.fileCount == 2 && $0.updatedAt != nil }, "each device reports its last upload and file count")
         XCTAssertTrue(try item.service.describeSlots(passphrase: "wrong password 123")
             .allSatisfy { $0.deviceName == nil && $0.error != nil })
         for slot in try item.service.slots() {

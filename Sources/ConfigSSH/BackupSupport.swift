@@ -8,40 +8,103 @@ extension Notification.Name {
 }
 
 /// The one passphrase that protects every encrypted backup made on this Mac: local snapshots,
-/// exports and the iCloud copy. It lives only in this Mac's Keychain, never in iCloud.
+/// exports and the iCloud copy. It is never uploaded.
+///
+/// Two ways to keep it. In the Keychain (default) it survives restarts, so automatic backup keeps
+/// working; the secret is read at most once per run and then held in memory, and "is one saved?"
+/// is answered without reading it, so opening settings or clicking "立即备份" does not ask for
+/// Keychain access again. "仅本次运行" keeps it in memory only: nothing is written anywhere, and
+/// it has to be entered again after the next launch.
 enum BackupPassphraseStore {
+    enum Storage: String { case keychain, session }
+
+    static let storageKey = "backupPassphraseStorage"
+
+    static var storage: Storage {
+        get { Storage(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .keychain }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: storageKey) }
+    }
+
+    nonisolated(unsafe) private static var memory: String?
+    nonisolated(unsafe) private static var keychainChecked = false
+    private static let lock = NSLock()
+
     #if DEBUG
     /// Debug preview keeps it in memory so the screens can be shown without touching the Keychain.
-    nonisolated(unsafe) private static var previewValue: String? = {
+    private static let previewValue: String? = {
         ConfigSSHPaths.isPreviewMode ? ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_PASSPHRASE"] : nil
     }()
     #endif
 
-    static func read() -> String? {
+    /// Whether a passphrase is available now. Never reads the secret from the Keychain.
+    static var isSet: Bool {
         #if DEBUG
-        if ConfigSSHPaths.isPreviewMode { return previewValue }
+        if ConfigSSHPaths.isPreviewMode { return memory != nil || previewValue != nil }
         #endif
-        return (try? CloudSyncSecretStore.read()) ?? nil
+        lock.lock(); defer { lock.unlock() }
+        if memory != nil { return true }
+        return storage == .keychain && CloudSyncSecretStore.exists()
     }
 
-    static func save(_ value: String) throws {
+    /// The passphrase, reading the Keychain at most once per run.
+    static func read() -> String? {
         #if DEBUG
-        if ConfigSSHPaths.isPreviewMode { previewValue = value; notify(); return }
+        if ConfigSSHPaths.isPreviewMode { return memory ?? previewValue }
         #endif
-        try CloudSyncSecretStore.save(value)
+        lock.lock(); defer { lock.unlock() }
+        if let memory { return memory }
+        guard storage == .keychain, !keychainChecked else { return nil }
+        keychainChecked = true
+        memory = (try? CloudSyncSecretStore.read()) ?? nil
+        return memory
+    }
+
+    static func save(_ value: String, storage newStorage: Storage) throws {
+        #if DEBUG
+        if ConfigSSHPaths.isPreviewMode { memory = value; storage = newStorage; notify(); return }
+        #endif
+        lock.lock()
+        if newStorage == .keychain {
+            do { try CloudSyncSecretStore.save(value) } catch { lock.unlock(); throw error }
+        } else {
+            // Leaving the Keychain mode must not leave an old secret behind.
+            try? CloudSyncSecretStore.remove()
+        }
+        storage = newStorage
+        memory = value
+        keychainChecked = true
+        lock.unlock()
         notify()
     }
 
     static func remove() throws {
         #if DEBUG
-        if ConfigSSHPaths.isPreviewMode { previewValue = nil; notify(); return }
+        if ConfigSSHPaths.isPreviewMode { memory = nil; notify(); return }
         #endif
-        try CloudSyncSecretStore.remove()
+        lock.lock()
+        do { try CloudSyncSecretStore.remove() } catch { lock.unlock(); throw error }
+        memory = nil
+        keychainChecked = true
+        lock.unlock()
         notify()
     }
 
     private static func notify() {
         NotificationCenter.default.post(name: .backupPassphraseChanged, object: nil)
+    }
+}
+
+/// Keeps the window the user was in when a panel closes. An `NSOpenPanel` or `NSSavePanel` run
+/// modally hands focus to another window of the app afterwards, which left the settings window
+/// behind the main window.
+@MainActor
+enum PanelFocus {
+    static func run<T>(_ body: () -> T) -> T {
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        let result = body()
+        window?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { window?.makeKeyAndOrderFront(nil) }
+        return result
     }
 }
 
@@ -86,7 +149,7 @@ enum ICloudLocation {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.directoryURL = driveRoot
-        guard panel.runModal() == .OK, let selected = panel.url else { return nil }
+        guard PanelFocus.run({ panel.runModal() }) == .OK, let selected = panel.url else { return nil }
         let path = selected.standardizedFileURL.path
         guard path == driveRoot.path || path.hasPrefix(driveRoot.path + "/") else {
             return .rejected("请选择 iCloud Drive 内的文件夹，不能选择其他位置。")
@@ -140,7 +203,7 @@ enum BackupSettings {
     static func makeEnvironment() -> BackupEnvironment {
         let available = ICloudLocation.isAvailable
         var cloud: BackupCloudTarget?
-        if available, let deviceID = try? CloudDeviceIdentity.currentID() {
+        if available, BackupSettings.plan.syncToICloud, let deviceID = try? CloudDeviceIdentity.currentID() {
             cloud = BackupCloudTarget(
                 service: CloudConfigSyncService(folder: ICloudLocation.backupFolder, cloudRoot: ICloudLocation.driveRoot),
                 deviceID: deviceID, deviceName: deviceName, acceptsIncompleteMirror: acceptsIncompleteMirror)

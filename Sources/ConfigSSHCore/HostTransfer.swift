@@ -150,3 +150,14 @@ package enum HostTransfer {
         return archive.entries.filter { $0.path != "config" && !read.contains($0.path) }.map(\.path).sorted()
     }
 }
+
+/// Keeps a file name to exactly one occurrence of its extension. A save panel appends a custom
+/// extension on its own, so an already-suffixed name ended up as "x.cssh.cssh".
+package enum FileNaming {
+    package static func withSingleExtension(_ name: String, _ ext: String) -> String {
+        var base = name
+        let suffix = "." + ext.lowercased()
+        while base.lowercased().hasSuffix(suffix) { base = String(base.dropLast(suffix.count)) }
+        return (base.isEmpty ? "ConfigSSH" : base) + "." + ext
+    }
+}

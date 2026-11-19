@@ -18,7 +18,7 @@ final class BackupScheduler {
     private(set) var statusMessage = UserDefaults.standard.string(forKey: BackupSettings.statusKey) ?? ""
     private(set) var problems: [String] = []
     private(set) var notes: [String] = []
-    private(set) var hasPassphrase = BackupPassphraseStore.read() != nil
+    private(set) var hasPassphrase = BackupPassphraseStore.isSet
 
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -27,7 +27,6 @@ final class BackupScheduler {
     @ObservationIgnored private var lastChangeAt: Date?
     @ObservationIgnored private var lastFullCheck = Date.distantPast
     @ObservationIgnored private var recheckAt: Date?
-    @ObservationIgnored private var passphrase = BackupPassphraseStore.read()
     @ObservationIgnored private var runAgain = false
 
     func start() {
@@ -52,8 +51,7 @@ final class BackupScheduler {
     // MARK: Triggers
 
     private func passphraseChanged() {
-        passphrase = BackupPassphraseStore.read()
-        hasPassphrase = passphrase != nil
+        hasPassphrase = BackupPassphraseStore.isSet
         requestRun()
     }
 
@@ -90,7 +88,8 @@ final class BackupScheduler {
         lastFullCheck = Date()
         recheckAt = nil
         let environment = BackupSettings.makeEnvironment()
-        let secret = passphrase
+        // Read only now that a pass really needs it (cached after the first read).
+        let secret = BackupPassphraseStore.read()
         let before = state
         let changedAt = lastChangeAt
         let root = ConfigSSHPaths.rootURL
@@ -108,7 +107,7 @@ final class BackupScheduler {
     /// "立即备份": a manual encrypted snapshot, plus an iCloud upload when sync is on.
     func backupNow() {
         guard !isRunning else { return }
-        guard let secret = passphrase else {
+        guard let secret = BackupPassphraseStore.read() else {
             problems = ["请先设置备份口令"]
             return
         }
