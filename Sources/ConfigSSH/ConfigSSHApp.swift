@@ -25,7 +25,7 @@ struct ConfigSSHApp: App {
     init() {
         NSApplication.shared.applicationIconImage = BrandIcon.image
         _ = GlobalShortcutManager.shared.apply(GlobalShortcutSettings.stored)
-        Task { @MainActor in AutoSnapshotScheduler.shared.start() }
+        Task { @MainActor in BackupScheduler.shared.start() }
         #if DEBUG
         if ConfigSSHPaths.isPreviewMode, ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_QUICK_PANEL"] == "1" {
             Task { @MainActor in

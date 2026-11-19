@@ -1166,3 +1166,85 @@ extension ConfigWriter {
         return plan
     }
 }
+
+extension ConfigWriter {
+    /// Plans writing a decrypted snapshot or an import back into `~/.ssh`.
+    ///
+    /// Only files that stay inside `~/.ssh` are touched, with the same limits as a plaintext
+    /// snapshot restore: the main `config`, managed `config.d` files, files the current config
+    /// statically Includes, or new files whose names are not keys or OpenSSH state. Entries that
+    /// came from outside `~/.ssh`, and any file the archive does not contain, are left alone.
+    ///
+    /// `includeRoot: false` leaves the current main `config` alone and writes only the other files
+    /// (used when importing hosts into a setup that should keep its own global settings).
+    package func planArchiveRestore(_ archive: BackupArchive, title: String, includeRoot: Bool = true) throws -> ConfigChangePlan {
+        try checkSSHDirectory()
+        let sshDirectory = rootURL.deletingLastPathComponent().standardizedFileURL
+        var restorable = archive.entries.filter { !$0.isExternal }
+        guard restorable.filter({ $0.path == "config" }).count == 1 else {
+            throw ConfigEditError.unsafe("备份缺少唯一的主配置文件，不能自动恢复")
+        }
+        if !includeRoot { restorable.removeAll { $0.path == "config" } }
+        guard !restorable.isEmpty else { throw ConfigEditError.invalid("除主配置外没有可导入的文件") }
+        let currentSources = Set(ConfigReader(rootURL: rootURL).scan().sources.map { $0.url.standardizedFileURL.path })
+        var versions: [FileVersion] = []
+        var changes: [PlannedFileChange] = []
+        var destinations: Set<String> = []
+        for entry in restorable {
+            try validateArchiveRelativePath(entry.path)
+            guard entry.content.count <= 16 * 1_024 * 1_024 else {
+                throw ConfigEditError.unsafe("备份中的文件超过大小限制：\(entry.path)")
+            }
+            let target = entry.path == "config" ? rootURL : sshDirectory.appendingPathComponent(entry.path).standardizedFileURL
+            if entry.path != "config" { try validateImportedFilePath(entry.path) }
+            guard destinations.insert(target.path.lowercased()).inserted,
+                  target == rootURL || target.path.hasPrefix(sshDirectory.path + "/") else {
+                throw ConfigEditError.unsafe("备份中的路径重复或超出 ~/.ssh：\(entry.path)")
+            }
+            if target != rootURL {
+                try validateWritableSource(target)
+                try validateSnapshotDestination(target, currentSources: currentSources)
+            }
+            let current = try SafeFileIO.snapshot(at: target)
+            versions.append(current.version)
+            if current.data != entry.content {
+                changes.append(PlannedFileChange(url: target, before: current.data, after: entry.content,
+                                                 expectedVersion: current.version))
+            }
+        }
+        guard !changes.isEmpty else { throw ConfigEditError.invalid("备份内容与当前配置完全一致，无需恢复") }
+        // Included files first, the root last, so a failed write never leaves a root that points at
+        // files that were not restored.
+        changes.sort { lhs, rhs in
+            if lhs.url == rootURL { return false }
+            if rhs.url == rootURL { return true }
+            return lhs.url.path < rhs.url.path
+        }
+        var plan = ConfigChangePlan(title: title, targetAlias: nil, checkedVersions: versions, changes: changes)
+        var warnings = ["只写入备份中的配置文件；不会删除备份之外新增的文件，也不会恢复私钥或 known_hosts。"]
+        let external = archive.entries.filter(\.isExternal).count
+        if external > 0 { warnings.append("备份中有 \(external) 个位于 ~/.ssh 之外的 Include 文件，不会被恢复，需要时请手动处理。") }
+        plan.warnings = warnings
+        return plan
+    }
+
+    /// Besides the safety rules above, only `config.d/` hosts and files beside `config` that are not
+    /// key or OpenSSH-state names come from an archive.
+    private func validateImportedFilePath(_ path: String) throws {
+        let lowered = path.lowercased()
+        let name = (lowered as NSString).lastPathComponent
+        let reserved = name.hasPrefix("authorized_keys") || name.hasPrefix("known_hosts") || name.hasPrefix("id_") ||
+            name.hasSuffix(".pub") || name.hasSuffix(".pem") || name.hasSuffix(".key") || ["environment", "rc"].contains(name)
+        guard !reserved, !name.hasPrefix(".") else {
+            throw ConfigEditError.unsafe("备份中包含密钥或 OpenSSH 状态文件，已拒绝：\(path)")
+        }
+    }
+
+    private func validateArchiveRelativePath(_ path: String) throws {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"), !path.contains("\0"),
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw ConfigEditError.unsafe("备份包含无效的相对路径：\(path)")
+        }
+    }
+}

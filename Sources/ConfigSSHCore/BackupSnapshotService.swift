@@ -327,7 +327,7 @@ package struct BackupSnapshotService {
         return try readResult.get()
     }
 
-    private func validate(_ destination: SnapshotDestination) throws -> URL {
+    func validate(_ destination: SnapshotDestination) throws -> URL {
         let folder = destination.folderURL
         switch destination {
         case .local:

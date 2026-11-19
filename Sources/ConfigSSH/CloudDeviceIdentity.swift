@@ -5,10 +5,30 @@ import Security
 enum CloudDeviceIdentity {
     private static let service = "cn.wuewa.configssh.cloud-device-id"
 
+    /// The ID is not secret, so besides the Keychain it is mirrored in preferences and cached for
+    /// the run. Reading data from the Keychain asks the user for access, and a backup pass must not
+    /// trigger that prompt every time it needs to know which device it is.
+    private static let mirrorKey = "cloudDeviceIDMirror"
+    nonisolated(unsafe) private static var cached: UUID?
+    private static let lock = NSLock()
+
     static func currentID() throws -> UUID {
         #if DEBUG
         if ConfigSSHPaths.isPreviewMode { return UUID(uuidString: "00000000-0000-4000-8000-000000000001")! }
         #endif
+        lock.lock(); defer { lock.unlock() }
+        if let cached { return cached }
+        if let text = UserDefaults.standard.string(forKey: mirrorKey), let mirrored = UUID(uuidString: text) {
+            cached = mirrored
+            return mirrored
+        }
+        let id = try keychainID()
+        UserDefaults.standard.set(id.uuidString, forKey: mirrorKey)
+        cached = id
+        return id
+    }
+
+    private static func keychainID() throws -> UUID {
         if let existing = try read() { return existing }
         let generated = UUID()
         let data = Data(generated.uuidString.utf8)
@@ -50,6 +70,20 @@ enum CloudDeviceIdentity {
 enum CloudSyncSecretStore {
     private static let service = "cn.wuewa.configssh.cloud-passphrase"
     private static let account = "shared-config-passphrase"
+
+    /// Whether a passphrase is saved. Asking only for attributes never shows the access prompt,
+    /// which reading the secret itself can.
+    static func exists() -> Bool {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnAttributes: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &item)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
 
     static func read() throws -> String? {
         #if DEBUG
