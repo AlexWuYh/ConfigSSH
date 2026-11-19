@@ -1,5 +1,17 @@
 import Foundation
 
+/// Public project links shown on the About page.
+package enum ProjectLinks {
+    package static let website = URL(string: "https://configssh.wuewa.cn")!
+    package static let repository = URL(string: "https://github.com/AlexWuYh/ConfigSSH")!
+    package static let releases = URL(string: "https://github.com/AlexWuYh/ConfigSSH/releases")!
+    package static let license = URL(string: "https://github.com/AlexWuYh/ConfigSSH/blob/main/LICENSE")!
+    package static let author = URL(string: "https://github.com/AlexWuYh")!
+    package static let authorName = "AlexWuYh"
+    package static let licenseName = "MIT License"
+    package static let copyrightYear = "2026"
+}
+
 /// Version comparison and GitHub Releases parsing for "检查更新". The network request itself
 /// lives in the app; this part is pure so it can be tested without network access.
 package enum UpdateCheck {

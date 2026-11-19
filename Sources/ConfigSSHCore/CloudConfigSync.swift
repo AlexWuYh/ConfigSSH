@@ -23,7 +23,7 @@ private struct EncryptedCloudEnvelope: Codable {
 }
 
 package enum CloudConfigCrypto {
-    private static let iterations: UInt32 = 310_000
+    static let iterations: UInt32 = 310_000
 
     package static func encrypt(_ archive: CloudConfigArchive, passphrase: String) throws -> Data {
         guard passphrase.count >= 12 else {
@@ -62,7 +62,7 @@ package enum CloudConfigCrypto {
         }
     }
 
-    private static func deriveKey(passphrase: String, salt: Data) throws -> SymmetricKey {
+    static func deriveKey(passphrase: String, salt: Data) throws -> SymmetricKey {
         var bytes = [UInt8](repeating: 0, count: 32)
         let result = passphrase.withCString { password in
             salt.withUnsafeBytes { saltBytes in
@@ -88,6 +88,17 @@ package struct CloudConfigDeviceSummary: Sendable {
     package let deviceID: UUID
     package let deviceName: String?
     package let error: String?
+    /// When that Mac last uploaded, and how many files; known once the file could be opened.
+    package var updatedAt: Date?
+    package var fileCount: Int?
+
+    package init(deviceID: UUID, deviceName: String?, error: String?, updatedAt: Date? = nil, fileCount: Int? = nil) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.error = error
+        self.updatedAt = updatedAt
+        self.fileCount = fileCount
+    }
 }
 
 package struct CloudPushPlan: Sendable {
@@ -172,7 +183,7 @@ package struct CloudConfigSyncService: Sendable {
                 let archive = try CloudConfigCrypto.decrypt(data, deviceID: slot.deviceID,
                                                             passphrase: passphrase)
                 return CloudConfigDeviceSummary(deviceID: slot.deviceID, deviceName: archive.deviceName,
-                                                error: nil)
+                                                error: nil, updatedAt: archive.createdAt, fileCount: archive.files.count)
             } catch {
                 return CloudConfigDeviceSummary(deviceID: slot.deviceID, deviceName: nil,
                                                 error: error.localizedDescription)
