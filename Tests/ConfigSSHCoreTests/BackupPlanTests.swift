@@ -61,4 +61,20 @@ final class BackupPlanTests: XCTestCase {
         XCTAssertEqual(decision.actions, [.takeSnapshot])
         XCTAssertTrue(decision.notes.contains { $0.contains("iCloud") })
     }
+
+    func testPlainLocalSnapshotsNeedNoPassphraseButICloudStillDoes() {
+        let plain = BackupPlan(isEnabled: true, snapshotFrequency: .daily, syncToICloud: false, encryptSnapshots: false)
+        XCTAssertEqual(plain.decide(inputs(passphrase: false)).actions, [.takeSnapshot], "plain snapshots run without a passphrase")
+        let both = BackupPlan(isEnabled: true, snapshotFrequency: .daily, syncToICloud: true, encryptSnapshots: false)
+        let decision = both.decide(inputs(passphrase: false, cloudDigest: ["old"], changedAgo: 60))
+        XCTAssertEqual(decision.actions, [.takeSnapshot], "the cloud copy is always encrypted, so it waits for a passphrase")
+        XCTAssertTrue(decision.notes.contains { $0.contains("iCloud") && $0.contains("口令") })
+        XCTAssertEqual(both.decide(inputs(passphrase: true, cloudDigest: ["old"], changedAgo: 60)).actions, [.takeSnapshot, .pushToICloud])
+        XCTAssertEqual(plan().decide(inputs(passphrase: false)).actions, [], "encrypted snapshots still need one")
+    }
+
+    func testEncryptionIsOnByDefault() {
+        XCTAssertTrue(BackupPlan.default.encryptSnapshots)
+        XCTAssertTrue(BackupPlan(isEnabled: true, snapshotFrequency: .daily, syncToICloud: false).encryptSnapshots)
+    }
 }

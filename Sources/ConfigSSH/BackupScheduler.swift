@@ -107,7 +107,9 @@ final class BackupScheduler {
     /// "立即备份": a manual encrypted snapshot, plus an iCloud upload when sync is on.
     func backupNow() {
         guard !isRunning else { return }
-        guard let secret = BackupPassphraseStore.read() else {
+        let secret = BackupPassphraseStore.read()
+        let encrypt = BackupSettings.plan.encryptSnapshots
+        if secret == nil && encrypt {
             problems = ["请先设置备份口令"]
             return
         }
@@ -119,8 +121,8 @@ final class BackupScheduler {
         Task {
             let outcome = await Task.detached(priority: .userInitiated) { () -> (BackupState, BackupReport, [URL]) in
                 let scan = ConfigReader(rootURL: root).scan()
-                let result = BackupCoordinator.backupNow(scan: scan, passphrase: secret, environment: environment,
-                                                         state: before, includeCloud: includeCloud)
+                let result = BackupCoordinator.backupNow(scan: scan, passphrase: secret, encryptSnapshots: encrypt,
+                                                         environment: environment, state: before, includeCloud: includeCloud)
                 return (result.state, result.report, scan.sources.map(\.url))
             }.value
             finish(state: outcome.0, report: outcome.1, sources: outcome.2)
@@ -138,7 +140,7 @@ final class BackupScheduler {
         isRunning = false
         if report.didSomething {
             var parts: [String] = []
-            if report.snapshotURL != nil { parts.append("已创建加密快照") }
+            if report.snapshotURL != nil { parts.append(BackupSettings.plan.encryptSnapshots ? "已创建加密快照" : "已创建快照（未加密）") }
             if let count = report.pushedFileCount { parts.append("已同步 \(count) 个文件到 iCloud") }
             let message = ChineseDate.short(Date()) + " · " + parts.joined(separator: "，")
             statusMessage = message

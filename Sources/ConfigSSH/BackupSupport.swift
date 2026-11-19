@@ -7,24 +7,13 @@ extension Notification.Name {
     static let backupSettingsChanged = Notification.Name("ConfigSSH.backupSettingsChanged")
 }
 
-/// The one passphrase that protects every encrypted backup made on this Mac: local snapshots,
-/// exports and the iCloud copy. It is never uploaded.
+/// The passphrase that protects encrypted local snapshots and the iCloud copy. It is never
+/// uploaded, and it lives in this Mac's Keychain.
 ///
-/// Two ways to keep it. In the Keychain (default) it survives restarts, so automatic backup keeps
-/// working; the secret is read at most once per run and then held in memory, and "is one saved?"
-/// is answered without reading it, so opening settings or clicking "立即备份" does not ask for
-/// Keychain access again. "仅本次运行" keeps it in memory only: nothing is written anywhere, and
-/// it has to be entered again after the next launch.
+/// The secret is read from the Keychain at most once per run and then held in memory, and "is one
+/// saved?" is answered from the item's attributes only, so opening settings or clicking "立即备份"
+/// does not ask for Keychain access again.
 enum BackupPassphraseStore {
-    enum Storage: String { case keychain, session }
-
-    static let storageKey = "backupPassphraseStorage"
-
-    static var storage: Storage {
-        get { Storage(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .keychain }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: storageKey) }
-    }
-
     nonisolated(unsafe) private static var memory: String?
     nonisolated(unsafe) private static var keychainChecked = false
     private static let lock = NSLock()
@@ -36,14 +25,13 @@ enum BackupPassphraseStore {
     }()
     #endif
 
-    /// Whether a passphrase is available now. Never reads the secret from the Keychain.
+    /// Whether a passphrase is saved. Never reads the secret from the Keychain.
     static var isSet: Bool {
         #if DEBUG
         if ConfigSSHPaths.isPreviewMode { return memory != nil || previewValue != nil }
         #endif
         lock.lock(); defer { lock.unlock() }
-        if memory != nil { return true }
-        return storage == .keychain && CloudSyncSecretStore.exists()
+        return memory != nil || CloudSyncSecretStore.exists()
     }
 
     /// The passphrase, reading the Keychain at most once per run.
@@ -53,24 +41,18 @@ enum BackupPassphraseStore {
         #endif
         lock.lock(); defer { lock.unlock() }
         if let memory { return memory }
-        guard storage == .keychain, !keychainChecked else { return nil }
+        guard !keychainChecked else { return nil }
         keychainChecked = true
         memory = (try? CloudSyncSecretStore.read()) ?? nil
         return memory
     }
 
-    static func save(_ value: String, storage newStorage: Storage) throws {
+    static func save(_ value: String) throws {
         #if DEBUG
-        if ConfigSSHPaths.isPreviewMode { memory = value; storage = newStorage; notify(); return }
+        if ConfigSSHPaths.isPreviewMode { memory = value; notify(); return }
         #endif
         lock.lock()
-        if newStorage == .keychain {
-            do { try CloudSyncSecretStore.save(value) } catch { lock.unlock(); throw error }
-        } else {
-            // Leaving the Keychain mode must not leave an old secret behind.
-            try? CloudSyncSecretStore.remove()
-        }
-        storage = newStorage
+        do { try CloudSyncSecretStore.save(value) } catch { lock.unlock(); throw error }
         memory = value
         keychainChecked = true
         lock.unlock()
@@ -166,6 +148,8 @@ enum BackupSettings {
     static let iCloudKey = "backupSyncICloud"
     static let keepKey = "backupKeepAutomatic"
     static let acceptIncompleteKey = "backupAcceptIncompleteCloud"
+    /// Defaults to encrypted. Turning it off only affects local snapshots, never iCloud.
+    static let encryptKey = "backupEncryptSnapshots"
     static let stateKey = "backupState"
     static let statusKey = "backupLastStatus"
 
@@ -174,7 +158,8 @@ enum BackupSettings {
         return BackupPlan(
             isEnabled: defaults.bool(forKey: enabledKey),
             snapshotFrequency: SnapshotFrequency(rawValue: defaults.string(forKey: frequencyKey) ?? "") ?? .daily,
-            syncToICloud: defaults.bool(forKey: iCloudKey))
+            syncToICloud: defaults.bool(forKey: iCloudKey),
+            encryptSnapshots: defaults.object(forKey: encryptKey) as? Bool ?? true)
     }
 
     static var keepAutomatic: Int {

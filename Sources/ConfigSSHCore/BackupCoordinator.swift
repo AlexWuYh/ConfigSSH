@@ -82,14 +82,12 @@ package enum BackupCoordinator {
         let decision = plan.decide(inputs)
         report.notes = decision.notes
         report.recheckAt = decision.recheckAt
-        guard let passphrase else { return (state, report) }
-
         for action in decision.actions {
             switch action {
             case .takeSnapshot:
                 do {
                     let url = try EncryptedSnapshotService(folder: environment.snapshotFolder)
-                        .create(scan: scan, passphrase: passphrase, automatic: true,
+                        .create(scan: scan, passphrase: plan.encryptSnapshots ? passphrase : nil, automatic: true,
                                 deviceName: environment.deviceName, appVersion: environment.appVersion, now: now)
                     try AutoSnapshotService().prune(folder: environment.snapshotFolder, keep: environment.keepAutomatic)
                     state.lastSnapshotDigest = digest
@@ -99,8 +97,8 @@ package enum BackupCoordinator {
                     report.errors.append("本机快照失败：\(error.localizedDescription)")
                 }
             case .pushToICloud:
-                guard let cloud = environment.cloud else {
-                    report.notes.append("未选择 iCloud 位置，云端同步暂停")
+                guard let cloud = environment.cloud, let passphrase else {
+                    report.notes.append("未选择 iCloud 位置或没有备份口令，云端同步暂停")
                     continue
                 }
                 do {
@@ -127,7 +125,7 @@ package enum BackupCoordinator {
 
     /// The "立即备份" button: a manual encrypted snapshot now, plus an iCloud push when sync is
     /// switched on. Unlike `run` it does not wait for a change or for the daily limit.
-    package static func backupNow(scan: ConfigScan, passphrase: String, environment: BackupEnvironment,
+    package static func backupNow(scan: ConfigScan, passphrase: String?, encryptSnapshots: Bool = true, environment: BackupEnvironment,
                                   state: BackupState, includeCloud: Bool, now: Date = Date()) -> (state: BackupState, report: BackupReport) {
         var state = state
         var report = BackupReport()
@@ -135,21 +133,25 @@ package enum BackupCoordinator {
             report.errors.append("没有可备份的 SSH 配置文件")
             return (state, report)
         }
-        if let problem = BackupCrypto.passphraseProblem(passphrase) {
+        if let passphrase, let problem = BackupCrypto.passphraseProblem(passphrase) {
             report.errors.append(problem)
             return (state, report)
+        }
+        if passphrase == nil && (encryptSnapshots || includeCloud) {
+            report.errors.append(encryptSnapshots ? "请先设置备份口令" : "iCloud 同步需要备份口令")
+            if encryptSnapshots { return (state, report) }
         }
         let digest = BackupArchive.digest(of: scan)
         do {
             report.snapshotURL = try EncryptedSnapshotService(folder: environment.snapshotFolder)
-                .create(scan: scan, passphrase: passphrase, automatic: false,
+                .create(scan: scan, passphrase: encryptSnapshots ? passphrase : nil, automatic: false,
                         deviceName: environment.deviceName, appVersion: environment.appVersion, now: now)
             state.lastSnapshotDigest = digest
             state.lastSnapshotAt = now
         } catch {
             report.errors.append("本机快照失败：\(error.localizedDescription)")
         }
-        if includeCloud, let cloud = environment.cloud, environment.iCloudAvailable {
+        if includeCloud, let passphrase, let cloud = environment.cloud, environment.iCloudAvailable {
             do {
                 let push = try cloud.service.planPush(scan: scan, deviceID: cloud.deviceID, deviceName: cloud.deviceName, passphrase: passphrase)
                 if !push.skippedSources.isEmpty && !cloud.acceptsIncompleteMirror {

@@ -31,11 +31,14 @@ package struct BackupPlan: Equatable, Sendable {
     package var isEnabled: Bool
     package var snapshotFrequency: SnapshotFrequency
     package var syncToICloud: Bool
+    /// Local snapshots only. The iCloud copy is always encrypted, so it still needs a passphrase.
+    package var encryptSnapshots: Bool
 
-    package init(isEnabled: Bool, snapshotFrequency: SnapshotFrequency, syncToICloud: Bool) {
+    package init(isEnabled: Bool, snapshotFrequency: SnapshotFrequency, syncToICloud: Bool, encryptSnapshots: Bool = true) {
         self.isEnabled = isEnabled
         self.snapshotFrequency = snapshotFrequency
         self.syncToICloud = syncToICloud
+        self.encryptSnapshots = encryptSnapshots
     }
 
     package static let `default` = BackupPlan(isEnabled: false, snapshotFrequency: .daily, syncToICloud: false)
@@ -88,14 +91,15 @@ package struct BackupPlan: Equatable, Sendable {
 
     package func decide(_ input: Inputs) -> Decision {
         guard isEnabled else { return Decision(actions: [], notes: [], recheckAt: nil) }
-        guard input.hasPassphrase else {
-            return Decision(actions: [], notes: ["还没有设置备份口令，自动备份暂停"], recheckAt: nil)
-        }
         var actions: [Action] = []
         var notes: [String] = []
         var recheck: Date?
+        let snapshotsNeedPassphrase = encryptSnapshots
+        if !input.hasPassphrase && (snapshotsNeedPassphrase || syncToICloud) {
+            notes.append(syncToICloud ? "iCloud 同步需要备份口令，已暂停" : "还没有设置备份口令，自动备份暂停")
+        }
 
-        if let interval = snapshotFrequency.interval {
+        if let interval = snapshotFrequency.interval, input.hasPassphrase || !snapshotsNeedPassphrase {
             let changed = input.lastSnapshotDigest != input.configDigest
             if let last = input.lastSnapshotAt, input.now.timeIntervalSince(last) < interval {
                 // Not due yet; the next hourly check handles it.
@@ -104,7 +108,7 @@ package struct BackupPlan: Equatable, Sendable {
             }
         }
 
-        if syncToICloud {
+        if syncToICloud, input.hasPassphrase {
             if !input.iCloudAvailable {
                 notes.append("未检测到 iCloud Drive，云端同步暂停")
             } else if input.lastCloudDigest != input.cloudDigest {

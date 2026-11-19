@@ -71,7 +71,7 @@ package struct EncryptedSnapshotService: Sendable {
     package init(folder: URL) { self.folder = folder }
 
     @discardableResult
-    package func create(scan: ConfigScan, passphrase: String, automatic: Bool = false,
+    package func create(scan: ConfigScan, passphrase: String?, automatic: Bool = false,
                         deviceName: String = ProcessInfo.processInfo.hostName,
                         appVersion: String = "", now: Date = Date()) throws -> URL {
         guard scan.availability == .available, !scan.sources.isEmpty else {
@@ -94,8 +94,10 @@ package struct EncryptedSnapshotService: Sendable {
             entries.append(.init(path: location.path, isExternal: location.isExternal, content: data))
         }
         let archive = BackupArchive(appVersion: appVersion, deviceName: String(deviceName.prefix(100)), entries: entries)
-        let sealed = try BackupCrypto.seal(try JSONEncoder().encode(archive), kind: .snapshot, passphrase: passphrase,
-                                           createdAt: now, isAutomatic: automatic)
+        let encoded = try JSONEncoder().encode(archive)
+        // No passphrase means the user chose unencrypted local snapshots.
+        let sealed = try passphrase.map { try BackupCrypto.seal(encoded, kind: .snapshot, passphrase: $0, createdAt: now, isAutomatic: automatic) }
+            ?? BackupCrypto.sealPlain(encoded, createdAt: now, isAutomatic: automatic)
         try SafeFileIO.ensureDirectory(target)
         let stamp = Int(now.timeIntervalSince1970)
         let name = "ConfigSSH-\(automatic ? "auto-" : "")\(stamp)-\(UUID().uuidString.prefix(8).lowercased()).\(Self.fileExtension)"
@@ -129,10 +131,16 @@ package struct EncryptedSnapshotService: Sendable {
         return (records.sorted { $0.header.createdAt > $1.header.createdAt }, issues)
     }
 
-    package func open(_ record: EncryptedSnapshotRecord, passphrase: String) throws -> BackupArchive {
+    package func open(_ record: EncryptedSnapshotRecord, passphrase: String?) throws -> BackupArchive {
         let current = try SafeFileIO.snapshot(at: record.url)
         guard let data = current.data else { throw ConfigEditError.io("快照文件不存在或已被移除") }
-        let opened = try BackupCrypto.open(data, passphrase: passphrase, expectedKind: .snapshot)
+        let opened: (header: BackupHeader, plaintext: Data)
+        if record.header.isEncrypted {
+            guard let passphrase else { throw ConfigEditError.invalid("这份快照已加密，需要备份口令才能打开") }
+            opened = try BackupCrypto.open(data, passphrase: passphrase, expectedKind: .snapshot)
+        } else {
+            opened = try BackupCrypto.openPlain(data)
+        }
         guard let archive = try? JSONDecoder().decode(BackupArchive.self, from: opened.plaintext) else {
             throw ConfigEditError.unsafe("快照内容无法解析，文件可能已损坏")
         }
@@ -203,8 +211,10 @@ package struct SnapshotItem: Identifiable, Sendable {
         case .encrypted(let record): record.header.isAutomatic
         }
     }
+    /// True only when the content is actually encrypted: not for old plaintext folders, and not
+    /// for a `.cssh` snapshot the user chose to keep unencrypted.
     package var isEncrypted: Bool {
-        if case .encrypted = storage { return true }
+        if case .encrypted(let record) = storage { return record.header.isEncrypted }
         return false
     }
 }

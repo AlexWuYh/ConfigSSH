@@ -69,13 +69,13 @@ struct BackupBrowserView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 4) {
                 let encrypted = items.filter(\.isEncrypted)
-                let legacy = items.filter { !$0.isEncrypted }
+                let plain = items.filter { !$0.isEncrypted }
                 header("加密快照 · \(encrypted.count)")
                 if encrypted.isEmpty { Text(isLoading ? "读取中…" : "还没有加密快照").font(.callout).foregroundStyle(.secondary).padding(.horizontal, 9) }
                 ForEach(encrypted) { row($0) }
-                if !legacy.isEmpty {
-                    header("旧版快照（未加密）· \(legacy.count)").padding(.top, 14)
-                    ForEach(legacy) { row($0) }
+                if !plain.isEmpty {
+                    header("未加密快照 · \(plain.count)").padding(.top, 14)
+                    ForEach(plain) { row($0) }
                 }
                 if !issues.isEmpty {
                     header("读取告警").padding(.top, 14)
@@ -99,7 +99,7 @@ struct BackupBrowserView: View {
     private func row(_ item: SnapshotItem) -> some View {
         Button { selectedID = item.id } label: {
             HStack(spacing: 10) {
-                Image(systemName: item.isEncrypted ? "lock.fill" : "lock.open")
+                Image(systemName: item.isEncrypted ? "lock.fill" : "lock.open.fill")
                     .foregroundStyle(item.isEncrypted ? BrandPalette.accent : Color.orange)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
@@ -128,13 +128,13 @@ struct BackupBrowserView: View {
                     Text(ChineseDate.full(item.createdAt)).font(.title2.bold())
                     Text(item.url.path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                     switch item.storage {
-                    case .encrypted(let record): encryptedDetail(item, record)
+                    case .encrypted(let record): record.header.isEncrypted ? AnyView(encryptedDetail(item, record)) : AnyView(plainDetail(item, record))
                     case .legacy(let record): legacyDetail(record)
                     }
                     if let errorMessage { Label(errorMessage, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                     HStack {
                         Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-                        if item.isEncrypted { Button("删除快照…", role: .destructive) { confirmsDelete = true } }
+                        if case .encrypted = item.storage { Button("删除快照…", role: .destructive) { confirmsDelete = true } }
                     }
                 }
                 .padding(22)
@@ -181,6 +181,38 @@ struct BackupBrowserView: View {
         }
     }
 
+    /// A `.cssh` snapshot the user chose to keep unencrypted: opens without a passphrase, with a clear warning.
+    @ViewBuilder
+    private func plainDetail(_ item: SnapshotItem, _ record: EncryptedSnapshotRecord) -> some View {
+        Label("这份快照没有加密：文件里是配置原文，任何拿到这个文件的人都能直接读取。建议确认不再需要后删除，并把“本机快照”改回加密。",
+              systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+        if let archive {
+            archiveContents(archive)
+            Button("恢复这份快照…") { prepareRestore(archive) }.buttonStyle(.borderedProminent)
+        } else if isUnlocking {
+            ProgressView("正在读取…")
+        } else if let unlockError {
+            Label(unlockError, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+        }
+    }
+
+    private func archiveContents(_ archive: BackupArchive) -> some View {
+        GroupBox("包含 \(archive.entries.count) 个配置文件 · 来自 \(archive.deviceName.isEmpty ? "未知设备" : archive.deviceName)") {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(archive.entries, id: \.path) { entry in
+                    HStack {
+                        Image(systemName: entry.isExternal ? "arrow.up.right.square" : "doc.text").foregroundStyle(.secondary)
+                        Text(entry.path).font(.callout.monospaced()).textSelection(.enabled)
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(entry.content.count), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if entry.isExternal { Text("位于 ~/.ssh 之外，仅作记录，不会恢复").font(.caption).foregroundStyle(.orange) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(6)
+        }
+    }
+
     @ViewBuilder
     private func legacyDetail(_ record: SnapshotRecord) -> some View {
         Label("这是旧版本创建的快照，文件未加密。可以照常预览并恢复，建议确认不再需要后删除。", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -213,11 +245,13 @@ struct BackupBrowserView: View {
     }
 
     private func unlockWithSavedPassphrase() {
-        guard let item = selected, item.isEncrypted, let saved = BackupPassphraseStore.read() else { return }
+        guard let item = selected, case .encrypted(let record) = item.storage else { return }
+        if !record.header.isEncrypted { unlock(with: nil, silent: true); return }       // no passphrase needed
+        guard let saved = BackupPassphraseStore.read() else { return }
         unlock(with: saved, silent: true)
     }
 
-    private func unlock(with passphrase: String, silent: Bool = false) {
+    private func unlock(with passphrase: String?, silent: Bool = false) {
         guard let item = selected, case .encrypted(let record) = item.storage else { return }
         isUnlocking = true
         unlockError = nil
@@ -251,7 +285,7 @@ struct BackupBrowserView: View {
     }
 
     private func deleteSelected() {
-        guard let item = selected, item.isEncrypted else { return }
+        guard let item = selected, case .encrypted = item.storage else { return }
         do {
             try FileManager.default.removeItem(at: item.url)
             selectedID = nil

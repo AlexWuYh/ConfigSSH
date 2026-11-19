@@ -160,4 +160,31 @@ final class BackupCoordinatorTests: XCTestCase {
         try FileManager.default.removeItem(at: host)
         XCTAssertTrue(ConfigStatSignature.make(rootURL: f.root, sources: sources).contains { $0.hasSuffix("|missing") })
     }
+
+    func testPlainSnapshotsAreWrittenUnencryptedWithoutAPassphraseAndTheCloudIsSkipped() throws {
+        let f = try fixture()
+        let plan = BackupPlan(isEnabled: true, snapshotFrequency: .daily, syncToICloud: true, encryptSnapshots: false)
+        let result = run(f, plan, passphrase: nil)
+        let record = try XCTUnwrap(try EncryptedSnapshotService(folder: f.snapshots).list().records.first)
+        XCTAssertFalse(record.header.isEncrypted)
+        XCTAssertNil(result.report.pushedFileCount)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.cloudFolder.path), "nothing reaches iCloud without a passphrase")
+
+        let withPassphrase = run(f, plan, state: result.state, passphrase: passphrase, changedAgo: 60)
+        XCTAssertEqual(withPassphrase.report.pushedFileCount, 2)
+        let cloudBytes = try Data(contentsOf: f.cloudFolder.appendingPathComponent("Devices/\(deviceID.uuidString.lowercased()).cssh"))
+        XCTAssertNil(cloudBytes.range(of: Data("web.example".utf8)), "the cloud file is encrypted even when local snapshots are not")
+    }
+
+    func testBackupNowWithPlainSnapshotsAndNoPassphraseStillWorks() throws {
+        let f = try fixture()
+        let now = BackupCoordinator.backupNow(scan: ConfigReader(rootURL: f.root).scan(), passphrase: nil, encryptSnapshots: false,
+                                              environment: environment(f), state: BackupState(), includeCloud: false)
+        XCTAssertNotNil(now.report.snapshotURL)
+        XCTAssertTrue(now.report.errors.isEmpty, "\(now.report.errors)")
+        let blocked = BackupCoordinator.backupNow(scan: ConfigReader(rootURL: f.root).scan(), passphrase: nil, encryptSnapshots: true,
+                                                  environment: environment(f), state: BackupState(), includeCloud: false)
+        XCTAssertNil(blocked.report.snapshotURL)
+        XCTAssertFalse(blocked.report.errors.isEmpty)
+    }
 }
