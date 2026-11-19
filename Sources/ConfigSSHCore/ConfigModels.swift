@@ -142,3 +142,20 @@ extension ConfigScan {
         return lines[(first - 1)...(last - 1)].joined(separator: "\n")
     }
 }
+
+extension ConfigScan {
+    /// The display name carried by the file name: a managed `config.d` file that holds only this
+    /// host and is named something other than the alias (that is how a display name given when
+    /// the host was added survives on disk, on other Macs and in exports).
+    package func fileDisplayName(for host: HostRecord) -> String? {
+        let managed = rootURL.deletingLastPathComponent().appendingPathComponent("config.d").standardizedFileURL
+        let base = managed.pathComponents
+        let url = host.sourceURL.standardizedFileURL
+        let parts = url.pathComponents
+        guard parts.starts(with: base), url.pathExtension.lowercased() == "conf",
+              parts.count == base.count + 1 || parts.count == base.count + 2,
+              hosts.filter({ $0.sourceURL.standardizedFileURL == url }).count == 1 else { return nil }
+        let stem = url.deletingPathExtension().lastPathComponent
+        return stem.caseInsensitiveCompare(host.alias) == .orderedSame ? nil : stem
+    }
+}

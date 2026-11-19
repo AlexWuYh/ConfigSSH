@@ -56,7 +56,8 @@ struct QuickLaunchView: View {
         let filtered = scan.hosts.filter { host in
             let details = metadata[host.metadataKey]
             let fields = [host.alias, host.hostName ?? "", host.user ?? "", host.configGroup ?? "",
-                          details?.displayName ?? "", details?.groupName ?? ""] + (details?.tags ?? [])
+                          details?.displayName ?? "", scan.fileDisplayName(for: host) ?? "",
+                          details?.groupName ?? ""] + (details?.tags ?? [])
             let terms = query.split(whereSeparator: \.isWhitespace)
             return terms.allSatisfy { term in
                 fields.contains { $0.range(of: String(term), options: [.caseInsensitive, .diacriticInsensitive]) != nil }
@@ -339,7 +340,8 @@ struct QuickLaunchView: View {
 
     private func displayName(for host: HostRecord) -> String {
         let name = metadata[host.metadataKey]?.displayName ?? ""
-        return name.isEmpty ? host.alias : name
+        if !name.isEmpty { return name }
+        return scan.fileDisplayName(for: host) ?? host.alias
     }
 
     private func launchSelected() {

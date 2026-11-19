@@ -35,7 +35,7 @@ struct SettingsView: View {
     @State private var executablePath = ""
     @State private var argumentsText = ""
     @State private var showsAppPicker = false
-    @State private var loginItemEnabled = SMAppService.mainApp.status == .enabled
+    @State private var loginItemStatus = SMAppService.mainApp.status
     @State private var settingsError: String?
     @State private var showsKeyBackupRisk = false
     @State private var showsSnapshotKeyConfirmation = false
@@ -253,22 +253,37 @@ struct SettingsView: View {
             .tag(1)
 
             Form {
-                Section("外观与启动") {
-                Picker("外观", selection: $appearance) {
-                    Text("跟随系统").tag("system")
-                    Text("浅色").tag("light")
-                    Text("深色").tag("dark")
-                }
-                Toggle("登录时启动", isOn: Binding(
-                    get: { loginItemEnabled },
-                    set: { updateLoginItem($0) }
-                ))
-                .disabled(Bundle.main.bundleURL.pathExtension != "app")
-                if Bundle.main.bundleURL.pathExtension != "app" {
-                    Text("登录时启动需要从打包后的 ConfigSSH.app 运行。")
+                Section("启动") {
+                    Toggle("开机自启", isOn: Binding(
+                        get: { loginItemStatus == .enabled || loginItemStatus == .requiresApproval },
+                        set: { updateLoginItem($0) }
+                    ))
+                    .disabled(Bundle.main.bundleURL.pathExtension != "app")
+                    .accessibilityIdentifier("launchAtLoginToggle")
+                    Text("开启后，登录 Mac 时自动在菜单栏运行 ConfigSSH，全局快捷键和菜单栏搜索随时可用。默认关闭。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    if loginItemStatus == .requiresApproval {
+                        HStack {
+                            Label("还需要在“系统设置 › 通用 › 登录项”中允许 ConfigSSH。", systemImage: "exclamationmark.triangle")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Button("打开系统设置") { SMAppService.openSystemSettingsLoginItems() }
+                        }
+                    }
+                    if Bundle.main.bundleURL.pathExtension != "app" {
+                        Text("开机自启需要从打包后的 ConfigSSH.app 运行。")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                Section("外观") {
+                    Picker("外观", selection: $appearance) {
+                        Text("跟随系统").tag("system")
+                        Text("浅色").tag("light")
+                        Text("深色").tag("dark")
+                    }
                 }
                 Section("快速连接") {
                     LabeledContent("全局快捷键") {
@@ -324,7 +339,7 @@ struct SettingsView: View {
                         Button("恢复默认（\(GlobalShortcut.default.display)）") { globalShortcut = GlobalShortcut.default.storageValue }
                             .disabled(currentShortcut == .default)
                     }
-                    Text("在任何应用中按全局快捷键，屏幕上方会弹出主机搜索框：输入关键词，用 ↑↓ 选择，回车即用默认终端连接，⌘↵ 用新标签页；Esc 或再次按快捷键关闭。也可以点击菜单栏图标搜索；主窗口内按 ⌘K。快捷键只在 ConfigSSH 运行时有效，建议同时开启“登录时启动”。")
+                    Text("在任何应用中按全局快捷键，屏幕上方会弹出主机搜索框：输入关键词，用 ↑↓ 选择，回车即用默认终端连接，⌘↵ 用新标签页；Esc 或再次按快捷键关闭。也可以点击菜单栏图标搜索；主窗口内按 ⌘K。快捷键只在 ConfigSSH 运行时有效，建议同时开启“开机自启”。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -560,10 +575,9 @@ struct SettingsView: View {
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            loginItemEnabled = SMAppService.mainApp.status == .enabled
         } catch {
             settingsError = error.localizedDescription
-            loginItemEnabled = SMAppService.mainApp.status == .enabled
         }
+        loginItemStatus = SMAppService.mainApp.status
     }
 }

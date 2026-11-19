@@ -51,7 +51,16 @@ struct HostEditorView: View {
         self.onCommit = onCommit
         _workingScan = State(initialValue: scan)
         switch mode {
-        case .add(let group): _input = State(initialValue: HostInput(group: group))
+        case .add(let group):
+            var initial = HostInput(group: group)
+            #if DEBUG
+            // Screenshots only: a filled-in form with one wrong field, to show the live hints.
+            if ConfigSSHPaths.isPreviewMode, ProcessInfo.processInfo.environment["CONFIGSSH_PREVIEW_ADD_PREFILL"] == "1" {
+                initial = HostInput(alias: "api-prod", hostName: "api.example.com", user: "deploy", port: "99999",
+                                    group: "Engineering", displayName: "生产环境 API")
+            }
+            #endif
+            _input = State(initialValue: initial)
         case .edit(let host), .delete(let host):
             let input = HostInput(host: host)
             _input = State(initialValue: input)
@@ -80,30 +89,72 @@ struct HostEditorView: View {
                 } else {
                     Form {
                         Section("基本信息") {
-                            TextField("Host Alias", text: $input.alias)
-                                .disabled(mode.existingHost != nil)
                             if case .add = mode {
-                                TextField("分组（留空则保存到 config.d）", text: $input.group)
-                                if !availableGroups.isEmpty {
-                                    Menu("选择现有分组") {
-                                        ForEach(availableGroups, id: \.self) { group in
-                                            Button(group) { input.group = group }
+                                GuidedField(
+                                    title: "显示名称", requirement: .optional,
+                                    help: "在主机列表和搜索框里显示的名字，可以用中文。留空则使用 Host Alias；配置文件也会以它命名。",
+                                    example: "生产环境 API",
+                                    text: $input.displayName,
+                                    problem: HostFileName.problem(input.displayName))
+                            }
+                            GuidedField(
+                                title: "Host Alias", requirement: .required,
+                                help: "连接时输入的短名字，即 ssh 后面跟的那个词（ssh api-prod）。只能用英文字母、数字、点、下划线、短横线，并以字母或数字开头。",
+                                example: "api-prod",
+                                text: $input.alias,
+                                problem: input.alias.isEmpty || mode.existingHost != nil ? nil : HostFieldRules.aliasProblem(input.alias),
+                                isDisabled: mode.existingHost != nil)
+                            if case .add = mode {
+                                GuidedField(
+                                    title: "分组", requirement: .optional,
+                                    help: "决定配置文件放在 config.d 的哪个子目录，也是列表里的分组。留空则不分组。",
+                                    example: "Engineering",
+                                    text: $input.group) {
+                                    if !availableGroups.isEmpty {
+                                        Menu("现有分组") {
+                                            ForEach(availableGroups, id: \.self) { group in
+                                                Button(group) { input.group = group }
+                                            }
                                         }
+                                        .fixedSize()
                                     }
                                 }
-                                Text("有分组时保存为 ~/.ssh/config.d/分组/别名.conf")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                if let preview = filePreview {
+                                    LabeledContent("将保存为") {
+                                        Text(preview)
+                                            .font(.caption.monospaced())
+                                            .textSelection(.enabled)
+                                            .multilineTextAlignment(.trailing)
+                                    }
+                                }
                             } else if !input.group.isEmpty {
                                 LabeledContent("文件分组", value: input.group)
                             }
-                            TextField("HostName", text: $input.hostName)
-                            TextField("User", text: $input.user)
-                            TextField("Port", text: $input.port)
+                            GuidedField(
+                                title: "HostName", requirement: .required,
+                                help: "服务器的域名或 IP 地址，ssh 实际连的就是它。",
+                                example: "api.example.com 或 203.0.113.10",
+                                text: $input.hostName,
+                                problem: HostFieldRules.hostNameProblem(input.hostName))
+                            GuidedField(
+                                title: "User", requirement: .optional,
+                                help: "登录服务器用的用户名。留空则使用这台 Mac 的用户名。",
+                                example: "deploy",
+                                text: $input.user,
+                                problem: HostFieldRules.userProblem(input.user))
+                            GuidedField(
+                                title: "Port", requirement: .optional,
+                                help: "服务器的 SSH 端口，范围 1–65535。大多数服务器是 22。",
+                                example: "22",
+                                text: $input.port,
+                                problem: HostFieldRules.portProblem(input.port))
                         }
                         Section("认证与跳板") {
-                            HStack {
-                                TextField("IdentityFile 路径", text: $input.identityFile)
+                            GuidedField(
+                                title: "IdentityFile", requirement: .optional,
+                                help: "私钥文件的路径，只记录路径，不读取文件内容。留空则使用 ssh 默认的密钥或 ssh-agent。",
+                                example: "~/.ssh/id_ed25519",
+                                text: $input.identityFile) {
                                 Button("选择…") { showsKeyPicker = true }
                             }
                             if !availableKeys.isEmpty {
@@ -117,7 +168,12 @@ struct HostEditorView: View {
                                 }
                             }
                             identitiesOnlyControl
-                            TextField("ProxyJump", text: $input.proxyJump)
+                            GuidedField(
+                                title: "ProxyJump", requirement: .optional,
+                                help: "要经过跳板机才能到达时填写：写跳板机的 Host 别名，或 用户@地址:端口；多台跳板机用逗号分隔。",
+                                example: "bastion 或 ops@jump.example.com:2222",
+                                text: $input.proxyJump,
+                                problem: HostFieldRules.proxyJumpProblem(input.proxyJump))
                         }
                         Section("连接复用") {
                             connectionReuseControl
@@ -192,7 +248,7 @@ struct HostEditorView: View {
                 .padding(16)
             }
             .navigationTitle(mode.title)
-            .frame(minWidth: 620, minHeight: 520, idealHeight: 600)
+            .frame(minWidth: 620, minHeight: 520, idealHeight: 760)
         }
         .fileImporter(isPresented: $showsKeyPicker, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
@@ -200,6 +256,15 @@ struct HostEditorView: View {
                 plan = nil
             }
         }
+    }
+
+    /// "~/.ssh/config.d/Engineering/生产环境 API.conf": where a new host will be saved.
+    private var filePreview: String? {
+        guard HostFileName.problem(input.displayName) == nil, !input.alias.isEmpty,
+              HostFieldRules.aliasProblem(input.alias) == nil else { return nil }
+        let group = input.group.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stem = HostFileName.stem(displayName: input.displayName, alias: input.alias)
+        return "~/.ssh/config.d/" + (group.isEmpty ? "" : group + "/") + stem + ".conf"
     }
 
     private var hasIdentityFile: Bool {

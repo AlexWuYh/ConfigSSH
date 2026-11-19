@@ -56,3 +56,16 @@ final class UpdateCheckTests: XCTestCase {
         XCTAssertThrowsError(try UpdateCheck.evaluate(apiResponse: Data("[]".utf8), currentVersion: "dev"))
     }
 }
+
+final class ProjectLinksTests: XCTestCase {
+    func testPublicLinksAreHTTPSAndPointAtTheProject() {
+        XCTAssertEqual(ProjectLinks.website.absoluteString, "https://configssh.wuewa.cn")
+        for url in [ProjectLinks.website, ProjectLinks.repository, ProjectLinks.releases, ProjectLinks.license, ProjectLinks.author] {
+            XCTAssertEqual(url.scheme, "https", url.absoluteString)
+        }
+        XCTAssertTrue(ProjectLinks.repository.path.hasSuffix("/ConfigSSH"))
+        XCTAssertTrue(ProjectLinks.releases.absoluteString.hasPrefix(ProjectLinks.repository.absoluteString))
+        XCTAssertTrue(ProjectLinks.license.absoluteString.hasPrefix(ProjectLinks.repository.absoluteString))
+        XCTAssertEqual(ProjectLinks.author.host, "github.com")
+    }
+}
